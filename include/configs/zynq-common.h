@@ -251,7 +251,7 @@
 	"loadbootenv_addr=0x2000000\0" \
 	"fit_size=0x900000\0"	\
 	"devicetree_size=0x20000\0"	\
-	"ramdisk_size=0x4000 00\0"	\
+	"ramdisk_size=0x400000\0"	\
 	"bitstream_size=0x400000\0" \
 	"boot_size=0xF00000\0"	\
 	"fdt_high=0x20000000\0"	\
