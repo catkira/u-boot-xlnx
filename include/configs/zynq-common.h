@@ -362,6 +362,14 @@
 			"echo Running uenvcmd ...; " \
 			"run uenvcmd; " \
 		"fi\0" \
+	"sdboot=if mmcinfo; then " \
+			"run uenvboot; " \
+			"echo Copying Linux from SD to RAM... && " \
+			"load mmc 0 ${fit_load_address} ${kernel_image} && " \
+			"load mmc 0 ${devicetree_load_address} ${devicetree_image} && " \
+			"load mmc 0 ${ramdisk_load_address} ${ramdisk_image} && " \
+			"bootm ${fit_load_address} ${ramdisk_load_address} ${devicetree_load_address}; " \
+		"fi\0" \
 	"usbboot=if usb start; then " \
 			"run uenvboot; " \
 			"echo Copying Linux from USB to RAM... && " \
