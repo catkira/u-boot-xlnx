@@ -131,6 +131,7 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
 	zynq-adrv9361.dtb \
 	zynq-adrv9364.dtb \
 	zynq-cc108.dtb \
+	zynq-ant.dtb \
 	zynq-cse-nand.dtb \
 	zynq-cse-nor.dtb \
 	zynq-cse-qspi-parallel.dtb \
