@@ -224,7 +224,6 @@
 /* enable preboot to be loaded before CONFIG_BOOTDELAY */
 #define CONFIG_PREBOOT
 
-
 /* Initial bootstrap JTAG u-boot
 #define CONFIG_ENV_IS_NOWHERE
 #define CONFIG_BOOTCOMMAND		"run jtagboot"
@@ -236,9 +235,10 @@
 	"ethaddr=00:0a:35:00:01:22\0"	\
 	"ipaddr=192.168.2.1\0"	\
 	"ipaddr_host=192.168.2.10\0"	\
+	"ipaddr_eth=192.168.137.2\0"	\
 	"netmask=255.255.255.0\0"	\
 	"kernel_image=uImage\0"	\
-	"fit_load_address=0x2080000\0" \
+	"fit_load_address=0x5000000\0" \
 	"fit_config=config@0\0" \
 	"extraenv_load_address=0x207E000\0" \
 	"ramdisk_image=uramdisk.image.gz\0"	\
@@ -257,10 +257,10 @@
 	"fdt_high=0x20000000\0"	\
 	"initrd_high=0x20000000\0"	\
 	"bootenv=uEnv.txt\0" \
-	"maxcpus=1\0" \
+	"maxcpus=2\0" \
 	"clear_reset_cause=mw f8000008 df0d && mw f8000258 00400000 && mw f8000004 767b\0" \
 	"loadbootenv=load mmc 0 ${loadbootenv_addr} ${bootenv}\0" \
-	"importbootenv=echo Importing environment from SD ...; " \
+	"importbootenv=echo Importing environment from SD...; " \
 		"env import -t ${loadbootenv_addr} $filesize\0" \
 	"sd_uEnvtxt_existence_test=test -e mmc 0 /uEnv.txt\0" \
 	"preboot=if test $modeboot = sdboot && env run sd_uEnvtxt_existence_test; " \
@@ -269,7 +269,7 @@
 			"fi; " \
 		"fi; \0" \
 	"refclk_source=internal\0" \
-	"mode=1r1t\0" \
+	"mode=2r2t\0" \
 	"adi_loadvals_pluto=if test -n \"${ad936x_ext_refclk}\" && test ! -n \"${ad936x_skip_ext_refclk}\"; then " \
 			"fdt set /clocks/clock@0 clock-frequency ${ad936x_ext_refclk}; " \
 		"fi; " \
@@ -364,11 +364,8 @@
 		"fi\0" \
 	"sdboot=if mmcinfo; then " \
 			"run uenvboot; " \
-			"echo Copying Linux from SD to RAM... && " \
-			"load mmc 0 ${fit_load_address} ${kernel_image} && " \
-			"load mmc 0 ${devicetree_load_address} ${devicetree_image} && " \
-			"load mmc 0 ${ramdisk_load_address} ${ramdisk_image} && " \
-			"bootm ${fit_load_address} ${ramdisk_load_address} ${devicetree_load_address}; " \
+			"echo Starting Linux from SD... && " \
+			"bootm ${fit_load_address}; " \
 		"fi\0" \
 	"usbboot=if usb start; then " \
 			"run uenvboot; " \
