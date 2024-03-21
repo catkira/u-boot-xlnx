@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
@@ -17,8 +18,6 @@
  *
  *   $Id: cmdlinepart.c,v 1.17 2004/11/26 11:18:47 lavinen Exp $
  *   Copyright 2002 SYSGO Real-Time Solutions GmbH
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -73,14 +72,20 @@
  */
 #include <common.h>
 #include <command.h>
+#include <env.h>
+#if defined(CONFIG_CMD_FLASH)
+#include <flash.h>
+#endif
+#include <image.h>
 #include <malloc.h>
 #include <jffs2/jffs2.h>
+#include <linux/bug.h>
 #include <linux/list.h>
 #include <linux/ctype.h>
 #include <cramfs/cramfs_fs.h>
 
 #if defined(CONFIG_CMD_NAND)
-#include <linux/mtd/nand.h>
+#include <linux/mtd/rawnand.h>
 #include <nand.h>
 #endif
 
@@ -146,14 +151,13 @@ extern int cramfs_info (struct part_info *info);
  * Check device number to be within valid range for given device type.
  *
  * @param dev device to validate
- * @return 0 if device is valid, 1 otherwise
+ * Return: 0 if device is valid, 1 otherwise
  */
 static int mtd_device_validate(u8 type, u8 num, u32 *size)
 {
 	if (type == MTD_DEV_TYPE_NOR) {
 #if defined(CONFIG_CMD_FLASH)
 		if (num < CONFIG_SYS_MAX_FLASH_BANKS) {
-			extern flash_info_t flash_info[];
 			*size = flash_info[num].size;
 
 			return 0;
@@ -166,8 +170,9 @@ static int mtd_device_validate(u8 type, u8 num, u32 *size)
 #endif
 	} else if (type == MTD_DEV_TYPE_NAND) {
 #if defined(CONFIG_JFFS2_NAND) && defined(CONFIG_CMD_NAND)
-		if (num < CONFIG_SYS_MAX_NAND_DEVICE) {
-			*size = nand_info[num]->size;
+		struct mtd_info *mtd = get_nand_dev_by_index(num);
+		if (mtd) {
+			*size = mtd->size;
 			return 0;
 		}
 
@@ -197,7 +202,7 @@ static int mtd_device_validate(u8 type, u8 num, u32 *size)
  * @param ret_id output pointer to next char after parse completes (output)
  * @param dev_type parsed device type (output)
  * @param dev_num parsed device number (output)
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
 static int mtd_id_parse(const char *id, const char **ret_id, u8 *dev_type, u8 *dev_num)
 {
@@ -237,14 +242,14 @@ static int mtd_id_parse(const char *id, const char **ret_id, u8 *dev_type, u8 *d
 /**
  * Calculate sector size.
  *
- * @return sector size
+ * Return: sector size
  */
 static inline u32 get_part_sector_size_nand(struct mtdids *id)
 {
 #if defined(CONFIG_JFFS2_NAND) && defined(CONFIG_CMD_NAND)
 	struct mtd_info *mtd;
 
-	mtd = nand_info[id->num];
+	mtd = get_nand_dev_by_index(id->num);
 
 	return mtd->erasesize;
 #else
@@ -256,8 +261,6 @@ static inline u32 get_part_sector_size_nand(struct mtdids *id)
 static inline u32 get_part_sector_size_nor(struct mtdids *id, struct part_info *part)
 {
 #if defined(CONFIG_CMD_FLASH)
-	extern flash_info_t flash_info[];
-
 	u32 end_phys, start_phys, sector_size = 0, size = 0;
 	int i;
 	flash_info_t *flash;
@@ -325,7 +328,7 @@ static inline u32 get_part_sector_size(struct mtdids *id, struct part_info *part
  * 'Static' version of command line mtdparts_init() routine. Single partition on
  * a single device configuration.
  *
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
 int mtdparts_init(void)
 {
@@ -356,11 +359,7 @@ int mtdparts_init(void)
 		/* id */
 		id->mtd_id = "single part";
 
-#if defined(CONFIG_JFFS2_DEV)
 		dev_name = CONFIG_JFFS2_DEV;
-#else
-		dev_name = "nor0";
-#endif
 
 		if ((mtd_id_parse(dev_name, NULL, &id->type, &id->num) != 0) ||
 				(mtd_device_validate(id->type, id->num, &size) != 0)) {
@@ -378,17 +377,9 @@ int mtdparts_init(void)
 		part->name = "static";
 		part->auto_name = 0;
 
-#if defined(CONFIG_JFFS2_PART_SIZE)
 		part->size = CONFIG_JFFS2_PART_SIZE;
-#else
-		part->size = SIZE_REMAINING;
-#endif
 
-#if defined(CONFIG_JFFS2_PART_OFFSET)
 		part->offset = CONFIG_JFFS2_PART_OFFSET;
-#else
-		part->offset = 0x00000000;
-#endif
 
 		part->dev = current_mtd_dev;
 		INIT_LIST_HEAD(&part->link);
@@ -420,7 +411,7 @@ int mtdparts_init(void)
  *
  * @param dev device that is to be searched for a partition
  * @param part_num requested partition number
- * @return pointer to the part_info, NULL otherwise
+ * Return: pointer to the part_info, NULL otherwise
  */
 static struct part_info* jffs2_part_info(struct mtd_device *dev, unsigned int part_num)
 {
@@ -467,27 +458,28 @@ static struct part_info* jffs2_part_info(struct mtd_device *dev, unsigned int pa
  * @param flag command flag
  * @param argc number of arguments supplied to the command
  * @param argv arguments list
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
-int do_jffs2_fsload(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_jffs2_fsload(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	char *fsname;
 	char *filename;
 	int size;
 	struct part_info *part;
-	ulong offset = load_addr;
+	ulong offset = image_load_addr;
 
 	/* pre-set Boot file name */
-	if ((filename = getenv("bootfile")) == NULL) {
+	filename = env_get("bootfile");
+	if (!filename)
 		filename = "uImage";
-	}
 
 	if (argc == 2) {
 		filename = argv[1];
 	}
 	if (argc == 3) {
-		offset = simple_strtoul(argv[1], NULL, 16);
-		load_addr = offset;
+		offset = hextoul(argv[1], NULL);
+		image_load_addr = offset;
 		filename = argv[2];
 	}
 
@@ -511,7 +503,7 @@ int do_jffs2_fsload(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		if (size > 0) {
 			printf("### %s load complete: %d bytes loaded to 0x%lx\n",
 				fsname, size, offset);
-			setenv_hex("filesize", size);
+			env_set_hex("filesize", size);
 		} else {
 			printf("### %s LOAD ERROR<%x> for %s!\n", fsname, size, filename);
 		}
@@ -529,9 +521,9 @@ int do_jffs2_fsload(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
  * @param flag command flag
  * @param argc number of arguments supplied to the command
  * @param argv arguments list
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
-int do_jffs2_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_jffs2_ls(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	char *filename = "/";
 	int ret;
@@ -567,9 +559,10 @@ int do_jffs2_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
  * @param flag command flag
  * @param argc number of arguments supplied to the command
  * @param argv arguments list
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
-int do_jffs2_fsinfo(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_jffs2_fsinfo(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	struct part_info *part;
 	char *fsname;
@@ -606,7 +599,7 @@ U_BOOT_CMD(
 	"      with offset 'off'"
 );
 U_BOOT_CMD(
-	ls,	2,	1,	do_jffs2_ls,
+	fsls,	2,	1,	do_jffs2_ls,
 	"list files in a directory (default /)",
 	"[ directory ]"
 );

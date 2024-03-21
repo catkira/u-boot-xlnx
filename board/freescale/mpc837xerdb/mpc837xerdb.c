@@ -1,20 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2007 Freescale Semiconductor, Inc.
  * Kevin Lam <kevin.lam@freescale.com>
  * Joe D'Abbraccio <joe.d'abbraccio@freescale.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <env.h>
 #include <hwconfig.h>
 #include <i2c.h>
+#include <init.h>
+#include <asm/bitops.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/fsl_mpc83xx_serdes.h>
 #include <fdt_support.h>
 #include <spd_sdram.h>
 #include <vsc7385.h>
 #include <fsl_esdhc.h>
+#include <linux/delay.h>
+
+DECLARE_GLOBAL_DATA_PTR;
 
 #if defined(CONFIG_SYS_DRAM_TEST)
 int
@@ -60,13 +66,13 @@ void ddr_enable_ecc(unsigned int dram_size);
 #endif
 int fixed_sdram(void);
 
-phys_size_t initdram(int board_type)
+int dram_init(void)
 {
 	immap_t *im = (immap_t *) CONFIG_SYS_IMMR;
 	u32 msize = 0;
 
 	if ((im->sysconf.immrbar & IMMRBAR_BASE_ADDR) != (u32) im)
-		return -1;
+		return -ENXIO;
 
 #if defined(CONFIG_SPD_EEPROM)
 	msize = spd_sdram();
@@ -79,7 +85,9 @@ phys_size_t initdram(int board_type)
 	ddr_enable_ecc(msize * 1024 * 1024);
 #endif
 	/* return total bus DDR size(bytes) */
-	return (msize * 1024 * 1024);
+	gd->ram_size = msize * 1024 * 1024;
+
+	return 0;
 }
 
 #if !defined(CONFIG_SPD_EEPROM)
@@ -89,10 +97,10 @@ phys_size_t initdram(int board_type)
 int fixed_sdram(void)
 {
 	immap_t *im = (immap_t *) CONFIG_SYS_IMMR;
-	u32 msize = CONFIG_SYS_DDR_SIZE * 1024 * 1024;
+	u32 msize = CONFIG_SYS_SDRAM_SIZE;
 	u32 msize_log2 = __ilog2(msize);
 
-	im->sysconf.ddrlaw[0].bar = CONFIG_SYS_DDR_SDRAM_BASE & 0xfffff000;
+	im->sysconf.ddrlaw[0].bar = CONFIG_SYS_SDRAM_BASE & 0xfffff000;
 	im->sysconf.ddrlaw[0].ar = LBLAWAR_EN | (msize_log2 - 1);
 
 	im->sysconf.ddrcdr = CONFIG_SYS_DDRCDR_VALUE;
@@ -119,7 +127,7 @@ int fixed_sdram(void)
 
 	im->ddr.sdram_cfg |= SDRAM_CFG_MEM_EN;
 	udelay(2000);
-	return CONFIG_SYS_DDR_SIZE;
+	return CONFIG_SYS_SDRAM_SIZE >> 20;
 }
 #endif	/*!CONFIG_SYS_SPD_EEPROM */
 
@@ -131,8 +139,8 @@ int checkboard(void)
 
 int board_early_init_f(void)
 {
-#ifdef CONFIG_FSL_SERDES
 	immap_t *immr = (immap_t *)CONFIG_SYS_IMMR;
+#ifdef CONFIG_FSL_SERDES
 	u32 spridr = in_be32(&immr->sysconf.spridr);
 
 	/* we check only part num, and don't look for CPU revisions */
@@ -159,17 +167,23 @@ int board_early_init_f(void)
 		break;
 	}
 #endif /* CONFIG_FSL_SERDES */
+
+#ifdef CONFIG_FSL_ESDHC
+	clrsetbits_be32(&immr->sysconf.sicrl, SICRL_USB_B, SICRL_USB_B_SD);
+	clrsetbits_be32(&immr->sysconf.sicrh, SICRH_SPI, SICRH_SPI_SD);
+#endif
 	return 0;
 }
 
 #ifdef CONFIG_FSL_ESDHC
-int board_mmc_init(bd_t *bd)
+#if !(CONFIG_IS_ENABLED(DM_MMC) || CONFIG_IS_ENABLED(DM_USB))
+int board_mmc_init(struct bd_info *bd)
 {
 	struct immap __iomem *im = (struct immap __iomem *)CONFIG_SYS_IMMR;
 	char buffer[HWCONFIG_BUFFER_SIZE] = {0};
 	int esdhc_hwconfig_enabled = 0;
 
-	if (getenv_f("hwconfig", buffer, sizeof(buffer)) > 0)
+	if (env_get_f("hwconfig", buffer, sizeof(buffer)) > 0)
 		esdhc_hwconfig_enabled = hwconfig_f("esdhc", buffer);
 
 	if (esdhc_hwconfig_enabled == 0)
@@ -180,6 +194,7 @@ int board_mmc_init(bd_t *bd)
 
 	return fsl_esdhc_mmc_init(bd);
 }
+#endif
 #endif
 
 /*
@@ -202,15 +217,24 @@ int misc_init_r(void)
 	return rc;
 }
 
+int board_late_init(void)
+{
+	volatile immap_t *immap = (immap_t *) CONFIG_SYS_IMMR;
+#ifdef CONFIG_USB_HOST
+	clrsetbits_be32(&immap->sysconf.sicrl, SICRL_USB_A, 0x40000000);
+#endif
+	return 0;
+}
+
 #if defined(CONFIG_OF_BOARD_SETUP)
 
-int ft_board_setup(void *blob, bd_t *bd)
+int ft_board_setup(void *blob, struct bd_info *bd)
 {
 #ifdef CONFIG_PCI
 	ft_pci_setup(blob, bd);
 #endif
 	ft_cpu_setup(blob, bd);
-	fdt_fixup_dr_usb(blob, bd);
+	fsl_fdt_fixup_dr_usb(blob, bd);
 	fdt_fixup_esdhc(blob, bd);
 
 	return 0;

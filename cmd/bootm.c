@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000-2009
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -11,18 +10,17 @@
 #include <common.h>
 #include <bootm.h>
 #include <command.h>
-#include <environment.h>
+#include <env.h>
 #include <errno.h>
 #include <image.h>
-#include <lmb.h>
 #include <malloc.h>
-#include <mapmem.h>
 #include <nand.h>
 #include <asm/byteorder.h>
-#include <linux/compiler.h>
+#include <asm/global_data.h>
 #include <linux/ctype.h>
 #include <linux/err.h>
 #include <u-boot/zlib.h>
+#include <mapmem.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -33,20 +31,21 @@ static int image_info(unsigned long addr);
 #if defined(CONFIG_CMD_IMLS)
 #include <flash.h>
 #include <mtd/cfi_flash.h>
-extern flash_info_t flash_info[]; /* info for FLASH chips */
 #endif
 
 #if defined(CONFIG_CMD_IMLS) || defined(CONFIG_CMD_IMLS_NAND)
-static int do_imls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[]);
+static int do_imls(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[]);
 #endif
-
-bootm_headers_t images;		/* pointers to os/initrd/fdt images */
 
 /* we overload the cmd field with our state machine info instead of a
  * function pointer */
-static cmd_tbl_t cmd_bootm_sub[] = {
+static struct cmd_tbl cmd_bootm_sub[] = {
 	U_BOOT_CMD_MKENT(start, 0, 1, (void *)BOOTM_STATE_START, "", ""),
 	U_BOOT_CMD_MKENT(loados, 0, 1, (void *)BOOTM_STATE_LOADOS, "", ""),
+#ifdef CONFIG_CMD_BOOTM_PRE_LOAD
+	U_BOOT_CMD_MKENT(preload, 0, 1, (void *)BOOTM_STATE_PRE_LOAD, "", ""),
+#endif
 #ifdef CONFIG_SYS_BOOT_RAMDISK_HIGH
 	U_BOOT_CMD_MKENT(ramdisk, 0, 1, (void *)BOOTM_STATE_RAMDISK, "", ""),
 #endif
@@ -60,12 +59,26 @@ static cmd_tbl_t cmd_bootm_sub[] = {
 	U_BOOT_CMD_MKENT(go, 0, 1, (void *)BOOTM_STATE_OS_GO, "", ""),
 };
 
-static int do_bootm_subcommand(cmd_tbl_t *cmdtp, int flag, int argc,
-			char * const argv[])
+#if defined(CONFIG_CMD_BOOTM_PRE_LOAD)
+static ulong bootm_get_addr(int argc, char *const argv[])
+{
+	ulong addr;
+
+	if (argc > 0)
+		addr = hextoul(argv[0], NULL);
+	else
+		addr = image_load_addr;
+
+	return addr;
+}
+#endif
+
+static int do_bootm_subcommand(struct cmd_tbl *cmdtp, int flag, int argc,
+			       char *const argv[])
 {
 	int ret = 0;
 	long state;
-	cmd_tbl_t *c;
+	struct cmd_tbl *c;
 
 	c = find_cmd_tbl(argv[0], &cmd_bootm_sub[0], ARRAY_SIZE(cmd_bootm_sub));
 	argc--; argv++;
@@ -73,7 +86,12 @@ static int do_bootm_subcommand(cmd_tbl_t *cmdtp, int flag, int argc,
 	if (c) {
 		state = (long)c->cmd;
 		if (state == BOOTM_STATE_START)
-			state |= BOOTM_STATE_FINDOS | BOOTM_STATE_FINDOTHER;
+			state |= BOOTM_STATE_PRE_LOAD | BOOTM_STATE_FINDOS |
+				 BOOTM_STATE_FINDOTHER;
+#if defined(CONFIG_CMD_BOOTM_PRE_LOAD)
+		if (state == BOOTM_STATE_PRE_LOAD)
+			state |= BOOTM_STATE_START;
+#endif
 	} else {
 		/* Unrecognized command */
 		return CMD_RET_USAGE;
@@ -87,15 +105,24 @@ static int do_bootm_subcommand(cmd_tbl_t *cmdtp, int flag, int argc,
 
 	ret = do_bootm_states(cmdtp, flag, argc, argv, state, &images, 0);
 
-	return ret;
+#if defined(CONFIG_CMD_BOOTM_PRE_LOAD)
+	if (!ret && (state & BOOTM_STATE_PRE_LOAD))
+		env_set_hex("loadaddr_verified",
+			    bootm_get_addr(argc, argv) + image_load_offset);
+#endif
+
+	return ret ? CMD_RET_FAILURE : 0;
 }
 
 /*******************************************************************/
 /* bootm - boot application image from image in memory */
 /*******************************************************************/
 
-int do_bootm(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_bootm(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
+	int states;
+	int ret;
+
 #ifdef CONFIG_NEEDS_MANUAL_RELOC
 	static int relocated = 0;
 
@@ -115,7 +142,7 @@ int do_bootm(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (argc > 0) {
 		char *endp;
 
-		simple_strtoul(argv[0], &endp, 16);
+		hextoul(argv[0], &endp);
 		/* endp pointing to NULL means that argv[0] was just a
 		 * valid number, pass it along to the normal bootm processing
 		 *
@@ -128,25 +155,27 @@ int do_bootm(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			return do_bootm_subcommand(cmdtp, flag, argc, argv);
 	}
 
-	return do_bootm_states(cmdtp, flag, argc, argv, BOOTM_STATE_START |
-		BOOTM_STATE_FINDOS | BOOTM_STATE_FINDOTHER |
-		BOOTM_STATE_LOADOS |
-#if defined(CONFIG_PPC) || defined(CONFIG_MIPS)
-		BOOTM_STATE_OS_CMDLINE |
-#endif
+	states = BOOTM_STATE_START | BOOTM_STATE_FINDOS | BOOTM_STATE_PRE_LOAD |
+		BOOTM_STATE_FINDOTHER | BOOTM_STATE_LOADOS |
 		BOOTM_STATE_OS_PREP | BOOTM_STATE_OS_FAKE_GO |
-		BOOTM_STATE_OS_GO, &images, 1);
+		BOOTM_STATE_OS_GO;
+	if (IS_ENABLED(CONFIG_SYS_BOOT_RAMDISK_HIGH))
+		states |= BOOTM_STATE_RAMDISK;
+	if (IS_ENABLED(CONFIG_PPC) || IS_ENABLED(CONFIG_MIPS))
+		states |= BOOTM_STATE_OS_CMDLINE;
+	ret = do_bootm_states(cmdtp, flag, argc, argv, states, &images, 1);
+
+	return ret ? CMD_RET_FAILURE : 0;
 }
 
-int bootm_maybe_autostart(cmd_tbl_t *cmdtp, const char *cmd)
+int bootm_maybe_autostart(struct cmd_tbl *cmdtp, const char *cmd)
 {
-	const char *ep = getenv("autostart");
-
-	if (ep && !strcmp(ep, "yes")) {
+	if (env_get_autostart()) {
 		char *local_args[2];
 		local_args[0] = (char *)cmd;
 		local_args[1] = NULL;
-		printf("Automatic boot of image at addr 0x%08lX ...\n", load_addr);
+		printf("Automatic boot of image at addr 0x%08lX ...\n",
+		       image_load_addr);
 		return do_bootm(cmdtp, 0, 1, local_args);
 	}
 
@@ -167,7 +196,7 @@ static char bootm_help_text[] =
 #endif
 #if defined(CONFIG_FIT)
 	"\t\nFor the new multi component uImage format (FIT) addresses\n"
-	"\tmust be extened to include component or configuration unit name:\n"
+	"\tmust be extended to include component or configuration unit name:\n"
 	"\taddr:<subimg_uname> - direct component image specification\n"
 	"\taddr#<conf_uname>   - configuration specification\n"
 	"\tUse iminfo command to get the list of existing component\n"
@@ -177,6 +206,9 @@ static char bootm_help_text[] =
 	"must be\n"
 	"issued in the order below (it's ok to not issue all sub-commands):\n"
 	"\tstart [addr [arg ...]]\n"
+#if defined(CONFIG_CMD_BOOTM_PRE_LOAD)
+	"\tpreload [addr [arg ..]] - run only the preload stage\n"
+#endif
 	"\tloados  - load OS image\n"
 #if defined(CONFIG_SYS_BOOT_RAMDISK_HIGH)
 	"\tramdisk - relocate initrd, set env initrd_start/initrd_end\n"
@@ -185,7 +217,7 @@ static char bootm_help_text[] =
 	"\tfdt     - relocate flat device tree\n"
 #endif
 	"\tcmdline - OS specific command line processing/setup\n"
-	"\tbdt     - OS specific bd_t processing\n"
+	"\tbdt     - OS specific bd_info processing\n"
 	"\tprep    - OS specific prep before relocation or go\n"
 #if defined(CONFIG_TRACE)
 	"\tfake    - OS specific fake start without go\n"
@@ -202,9 +234,9 @@ U_BOOT_CMD(
 /* bootd - boot default image */
 /*******************************************************************/
 #if defined(CONFIG_CMD_BOOTD)
-int do_bootd(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_bootd(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
-	return run_command(getenv("bootcmd"), flag);
+	return run_command(env_get("bootcmd"), flag);
 }
 
 U_BOOT_CMD(
@@ -227,18 +259,19 @@ U_BOOT_CMD(
 /* iminfo - print header info for a requested image */
 /*******************************************************************/
 #if defined(CONFIG_CMD_IMI)
-static int do_iminfo(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_iminfo(struct cmd_tbl *cmdtp, int flag, int argc,
+		     char *const argv[])
 {
 	int	arg;
 	ulong	addr;
 	int	rcode = 0;
 
 	if (argc < 2) {
-		return image_info(load_addr);
+		return image_info(image_load_addr);
 	}
 
 	for (arg = 1; arg < argc; ++arg) {
-		addr = simple_strtoul(argv[arg], NULL, 16);
+		addr = hextoul(argv[arg], NULL);
 		if (image_info(addr) != 0)
 			rcode = 1;
 	}
@@ -247,21 +280,23 @@ static int do_iminfo(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 
 static int image_info(ulong addr)
 {
-	void *hdr = (void *)addr;
+	void *hdr = (void *)map_sysmem(addr, 0);
 
 	printf("\n## Checking Image at %08lx ...\n", addr);
 
 	switch (genimg_get_format(hdr)) {
-#if defined(CONFIG_IMAGE_FORMAT_LEGACY)
+#if defined(CONFIG_LEGACY_IMAGE_FORMAT)
 	case IMAGE_FORMAT_LEGACY:
 		puts("   Legacy image found\n");
 		if (!image_check_magic(hdr)) {
 			puts("   Bad Magic Number\n");
+			unmap_sysmem(hdr);
 			return 1;
 		}
 
 		if (!image_check_hcrc(hdr)) {
 			puts("   Bad Header Checksum\n");
+			unmap_sysmem(hdr);
 			return 1;
 		}
 
@@ -270,23 +305,27 @@ static int image_info(ulong addr)
 		puts("   Verifying Checksum ... ");
 		if (!image_check_dcrc(hdr)) {
 			puts("   Bad Data CRC\n");
+			unmap_sysmem(hdr);
 			return 1;
 		}
 		puts("OK\n");
+		unmap_sysmem(hdr);
 		return 0;
 #endif
 #if defined(CONFIG_ANDROID_BOOT_IMAGE)
 	case IMAGE_FORMAT_ANDROID:
 		puts("   Android image found\n");
 		android_print_contents(hdr);
+		unmap_sysmem(hdr);
 		return 0;
 #endif
 #if defined(CONFIG_FIT)
 	case IMAGE_FORMAT_FIT:
 		puts("   FIT image found\n");
 
-		if (!fit_check_format(hdr)) {
+		if (fit_check_format(hdr, IMAGE_SIZE_INVAL)) {
 			puts("Bad FIT image format!\n");
+			unmap_sysmem(hdr);
 			return 1;
 		}
 
@@ -294,9 +333,11 @@ static int image_info(ulong addr)
 
 		if (!fit_all_image_verify(hdr)) {
 			puts("Bad hash in FIT image!\n");
+			unmap_sysmem(hdr);
 			return 1;
 		}
 
+		unmap_sysmem(hdr);
 		return 0;
 #endif
 	default:
@@ -304,6 +345,7 @@ static int image_info(ulong addr)
 		break;
 	}
 
+	unmap_sysmem(hdr);
 	return 1;
 }
 
@@ -329,7 +371,7 @@ static int do_imls_nor(void)
 	void *hdr;
 
 	for (i = 0, info = &flash_info[0];
-		i < CONFIG_SYS_MAX_FLASH_BANKS; ++i, ++info) {
+		i < CFI_FLASH_BANKS; ++i, ++info) {
 
 		if (info->flash_id == FLASH_UNKNOWN)
 			goto next_bank;
@@ -340,7 +382,7 @@ static int do_imls_nor(void)
 				goto next_sector;
 
 			switch (genimg_get_format(hdr)) {
-#if defined(CONFIG_IMAGE_FORMAT_LEGACY)
+#if defined(CONFIG_LEGACY_IMAGE_FORMAT)
 			case IMAGE_FORMAT_LEGACY:
 				if (!image_check_hcrc(hdr))
 					goto next_sector;
@@ -358,7 +400,7 @@ static int do_imls_nor(void)
 #endif
 #if defined(CONFIG_FIT)
 			case IMAGE_FORMAT_FIT:
-				if (!fit_check_format(hdr))
+				if (fit_check_format(hdr, IMAGE_SIZE_INVAL))
 					goto next_sector;
 
 				printf("FIT Image at %08lX:\n", (ulong)hdr);
@@ -392,7 +434,7 @@ static int nand_imls_legacyimage(struct mtd_info *mtd, int nand_dev,
 		return -ENOMEM;
 	}
 
-	ret = nand_read_skip_bad(mtd, off, &len, imgdata);
+	ret = nand_read_skip_bad(mtd, off, &len, NULL, mtd->size, imgdata);
 	if (ret < 0 && ret != -EUCLEAN) {
 		free(imgdata);
 		return ret;
@@ -432,13 +474,13 @@ static int nand_imls_fitimage(struct mtd_info *mtd, int nand_dev, loff_t off,
 		return -ENOMEM;
 	}
 
-	ret = nand_read_skip_bad(mtd, off, &len, imgdata);
+	ret = nand_read_skip_bad(mtd, off, &len, NULL, mtd->size, imgdata);
 	if (ret < 0 && ret != -EUCLEAN) {
 		free(imgdata);
 		return ret;
 	}
 
-	if (!fit_check_format(imgdata)) {
+	if (fit_check_format(imgdata, IMAGE_SIZE_INVAL)) {
 		free(imgdata);
 		return 0;
 	}
@@ -467,12 +509,12 @@ static int do_imls_nand(void)
 	printf("\n");
 
 	for (nand_dev = 0; nand_dev < CONFIG_SYS_MAX_NAND_DEVICE; nand_dev++) {
-		mtd = nand_info[nand_dev];
+		mtd = get_nand_dev_by_index(nand_dev);
 		if (!mtd->name || !mtd->size)
 			continue;
 
 		for (off = 0; off < mtd->size; off += mtd->erasesize) {
-			const image_header_t *header;
+			const struct legacy_img_hdr *header;
 			int ret;
 
 			if (nand_block_isbad(mtd, off))
@@ -488,9 +530,9 @@ static int do_imls_nand(void)
 			}
 
 			switch (genimg_get_format(buffer)) {
-#if defined(CONFIG_IMAGE_FORMAT_LEGACY)
+#if defined(CONFIG_LEGACY_IMAGE_FORMAT)
 			case IMAGE_FORMAT_LEGACY:
-				header = (const image_header_t *)buffer;
+				header = (const struct legacy_img_hdr *)buffer;
 
 				len = image_get_image_size(header);
 				nand_imls_legacyimage(mtd, nand_dev, off, len);
@@ -511,7 +553,8 @@ static int do_imls_nand(void)
 #endif
 
 #if defined(CONFIG_CMD_IMLS) || defined(CONFIG_CMD_IMLS_NAND)
-static int do_imls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_imls(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	int ret_nor = 0, ret_nand = 0;
 
@@ -540,248 +583,3 @@ U_BOOT_CMD(
 	"      boundaries in nor/nand flash."
 );
 #endif
-
-#ifdef CONFIG_CMD_BOOTZ
-
-int __weak bootz_setup(ulong image, ulong *start, ulong *end)
-{
-	/* Please define bootz_setup() for your platform */
-
-	puts("Your platform's zImage format isn't supported yet!\n");
-	return -1;
-}
-
-/*
- * zImage booting support
- */
-static int bootz_start(cmd_tbl_t *cmdtp, int flag, int argc,
-			char * const argv[], bootm_headers_t *images)
-{
-	int ret;
-	ulong zi_start, zi_end;
-
-	ret = do_bootm_states(cmdtp, flag, argc, argv, BOOTM_STATE_START,
-			      images, 1);
-
-	/* Setup Linux kernel zImage entry point */
-	if (!argc) {
-		images->ep = load_addr;
-		debug("*  kernel: default image load address = 0x%08lx\n",
-				load_addr);
-	} else {
-		images->ep = simple_strtoul(argv[0], NULL, 16);
-		debug("*  kernel: cmdline image address = 0x%08lx\n",
-			images->ep);
-	}
-
-	ret = bootz_setup(images->ep, &zi_start, &zi_end);
-	if (ret != 0)
-		return 1;
-
-	lmb_reserve(&images->lmb, images->ep, zi_end - zi_start);
-
-	/*
-	 * Handle the BOOTM_STATE_FINDOTHER state ourselves as we do not
-	 * have a header that provide this informaiton.
-	 */
-	if (bootm_find_images(flag, argc, argv))
-		return 1;
-
-	return 0;
-}
-
-int do_bootz(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
-{
-	int ret;
-
-	/* Consume 'bootz' */
-	argc--; argv++;
-
-	if (bootz_start(cmdtp, flag, argc, argv, &images))
-		return 1;
-
-	/*
-	 * We are doing the BOOTM_STATE_LOADOS state ourselves, so must
-	 * disable interrupts ourselves
-	 */
-	bootm_disable_interrupts();
-
-	images.os.os = IH_OS_LINUX;
-	ret = do_bootm_states(cmdtp, flag, argc, argv,
-			      BOOTM_STATE_OS_PREP | BOOTM_STATE_OS_FAKE_GO |
-			      BOOTM_STATE_OS_GO,
-			      &images, 1);
-
-	return ret;
-}
-
-#ifdef CONFIG_SYS_LONGHELP
-static char bootz_help_text[] =
-	"[addr [initrd[:size]] [fdt]]\n"
-	"    - boot Linux zImage stored in memory\n"
-	"\tThe argument 'initrd' is optional and specifies the address\n"
-	"\tof the initrd in memory. The optional argument ':size' allows\n"
-	"\tspecifying the size of RAW initrd.\n"
-#if defined(CONFIG_OF_LIBFDT)
-	"\tWhen booting a Linux kernel which requires a flat device-tree\n"
-	"\ta third argument is required which is the address of the\n"
-	"\tdevice-tree blob. To boot that kernel without an initrd image,\n"
-	"\tuse a '-' for the second argument. If you do not pass a third\n"
-	"\ta bd_info struct will be passed instead\n"
-#endif
-	"";
-#endif
-
-U_BOOT_CMD(
-	bootz,	CONFIG_SYS_MAXARGS,	1,	do_bootz,
-	"boot Linux zImage image from memory", bootz_help_text
-);
-#endif	/* CONFIG_CMD_BOOTZ */
-
-#ifdef CONFIG_CMD_BOOTI
-/* See Documentation/arm64/booting.txt in the Linux kernel */
-struct Image_header {
-	uint32_t	code0;		/* Executable code */
-	uint32_t	code1;		/* Executable code */
-	uint64_t	text_offset;	/* Image load offset, LE */
-	uint64_t	image_size;	/* Effective Image size, LE */
-	uint64_t	res1;		/* reserved */
-	uint64_t	res2;		/* reserved */
-	uint64_t	res3;		/* reserved */
-	uint64_t	res4;		/* reserved */
-	uint32_t	magic;		/* Magic number */
-	uint32_t	res5;
-};
-
-#define LINUX_ARM64_IMAGE_MAGIC	0x644d5241
-
-static int booti_setup(bootm_headers_t *images)
-{
-	struct Image_header *ih;
-	uint64_t dst;
-	uint64_t image_size;
-
-	ih = (struct Image_header *)map_sysmem(images->ep, 0);
-
-	if (ih->magic != le32_to_cpu(LINUX_ARM64_IMAGE_MAGIC)) {
-		puts("Bad Linux ARM64 Image magic!\n");
-		return 1;
-	}
-	
-	if (ih->image_size == 0) {
-		puts("Image lacks image_size field, assuming 16MiB\n");
-		image_size = 16 << 20;
-	} else {
-		image_size = le64_to_cpu(ih->image_size);
-	}
-
-	/*
-	 * If we are not at the correct run-time location, set the new
-	 * correct location and then move the image there.
-	 */
-	dst = gd->bd->bi_dram[0].start + le64_to_cpu(ih->text_offset);
-
-	unmap_sysmem(ih);
-
-	if (images->ep != dst) {
-		void *src;
-
-		debug("Moving Image from 0x%lx to 0x%llx\n", images->ep, dst);
-
-		src = (void *)images->ep;
-		images->ep = dst;
-		memmove((void *)dst, src, image_size);
-	}
-
-	return 0;
-}
-
-/*
- * Image booting support
- */
-static int booti_start(cmd_tbl_t *cmdtp, int flag, int argc,
-			char * const argv[], bootm_headers_t *images)
-{
-	int ret;
-	struct Image_header *ih;
-
-	ret = do_bootm_states(cmdtp, flag, argc, argv, BOOTM_STATE_START,
-			      images, 1);
-
-	/* Setup Linux kernel Image entry point */
-	if (!argc) {
-		images->ep = load_addr;
-		debug("*  kernel: default image load address = 0x%08lx\n",
-				load_addr);
-	} else {
-		images->ep = simple_strtoul(argv[0], NULL, 16);
-		debug("*  kernel: cmdline image address = 0x%08lx\n",
-			images->ep);
-	}
-
-	ret = booti_setup(images);
-	if (ret != 0)
-		return 1;
-
-	ih = (struct Image_header *)map_sysmem(images->ep, 0);
-
-	lmb_reserve(&images->lmb, images->ep, le32_to_cpu(ih->image_size));
-
-	unmap_sysmem(ih);
-
-	/*
-	 * Handle the BOOTM_STATE_FINDOTHER state ourselves as we do not
-	 * have a header that provide this informaiton.
-	 */
-	if (bootm_find_images(flag, argc, argv))
-		return 1;
-
-	return 0;
-}
-
-int do_booti(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
-{
-	int ret;
-
-	/* Consume 'booti' */
-	argc--; argv++;
-
-	if (booti_start(cmdtp, flag, argc, argv, &images))
-		return 1;
-
-	/*
-	 * We are doing the BOOTM_STATE_LOADOS state ourselves, so must
-	 * disable interrupts ourselves
-	 */
-	bootm_disable_interrupts();
-
-	images.os.os = IH_OS_LINUX;
-	ret = do_bootm_states(cmdtp, flag, argc, argv,
-			      BOOTM_STATE_OS_PREP | BOOTM_STATE_OS_FAKE_GO |
-			      BOOTM_STATE_OS_GO,
-			      &images, 1);
-
-	return ret;
-}
-
-#ifdef CONFIG_SYS_LONGHELP
-static char booti_help_text[] =
-	"[addr [initrd[:size]] [fdt]]\n"
-	"    - boot arm64 Linux Image stored in memory\n"
-	"\tThe argument 'initrd' is optional and specifies the address\n"
-	"\tof an initrd in memory. The optional parameter ':size' allows\n"
-	"\tspecifying the size of a RAW initrd.\n"
-#if defined(CONFIG_OF_LIBFDT)
-	"\tSince booting a Linux kernel requires a flat device-tree, a\n"
-	"\tthird argument providing the address of the device-tree blob\n"
-	"\tis required. To boot a kernel with a device-tree blob but\n"
-	"\twithout an initrd image, use a '-' for the initrd argument.\n"
-#endif
-	"";
-#endif
-
-U_BOOT_CMD(
-	booti,	CONFIG_SYS_MAXARGS,	1,	do_booti,
-	"boot arm64 Linux Image image from memory", booti_help_text
-);
-#endif	/* CONFIG_CMD_BOOTI */

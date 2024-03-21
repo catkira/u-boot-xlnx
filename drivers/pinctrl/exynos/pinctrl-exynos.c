@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Exynos pinctrl driver common code.
  * Copyright (C) 2016 Samsung Electronics
  * Thomas Abraham <thomas.ab@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
+#include <log.h>
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include "pinctrl-exynos.h"
 
@@ -38,9 +39,9 @@ static unsigned long pin_to_bank_base(struct udevice *dev, const char *pin_name,
 						u32 *pin)
 {
 	struct exynos_pinctrl_priv *priv = dev_get_priv(dev);
-	const struct samsung_pin_ctrl *pin_ctrl = priv->pin_ctrl;
-	const struct samsung_pin_bank_data *bank_data = pin_ctrl->pin_banks;
-	u32 nr_banks = pin_ctrl->nr_banks, idx = 0;
+	const struct samsung_pin_ctrl *pin_ctrl_array = priv->pin_ctrl;
+	const struct samsung_pin_bank_data *bank_data;
+	u32 nr_banks, pin_ctrl_idx = 0, idx = 0, bank_base;
 	char bank[10];
 
 	/*
@@ -55,11 +56,26 @@ static unsigned long pin_to_bank_base(struct udevice *dev, const char *pin_name,
 	*pin = pin_name[++idx] - '0';
 
 	/* lookup the pin bank data using the pin bank name */
-	for (idx = 0; idx < nr_banks; idx++)
-		if (!strcmp(bank, bank_data[idx].name))
+	while (true) {
+		const struct samsung_pin_ctrl *pin_ctrl = &pin_ctrl_array[pin_ctrl_idx];
+
+		nr_banks = pin_ctrl->nr_banks;
+		if (!nr_banks)
 			break;
 
-	return priv->base + bank_data[idx].offset;
+		bank_data = pin_ctrl->pin_banks;
+		for (idx = 0; idx < nr_banks; idx++) {
+			debug("pinctrl[%d] bank_data[%d] name is: %s\n",
+					pin_ctrl_idx, idx, bank_data[idx].name);
+			if (!strcmp(bank, bank_data[idx].name)) {
+				bank_base = priv->base + bank_data[idx].offset;
+				break;
+			}
+		}
+		pin_ctrl_idx++;
+	}
+
+	return bank_base;
 }
 
 /**
@@ -70,8 +86,8 @@ static unsigned long pin_to_bank_base(struct udevice *dev, const char *pin_name,
 int exynos_pinctrl_set_state(struct udevice *dev, struct udevice *config)
 {
 	const void *fdt = gd->fdt_blob;
-	int node = config->of_offset;
-	unsigned int count, idx, pin_num, ret;
+	int node = dev_of_offset(config);
+	unsigned int count, idx, pin_num;
 	unsigned int pinfunc, pinpud, pindrv;
 	unsigned long reg, value;
 	const char *name;
@@ -80,7 +96,7 @@ int exynos_pinctrl_set_state(struct udevice *dev, struct udevice *config)
 	 * refer to the following document for the pinctrl bindings
 	 * linux/Documentation/devicetree/bindings/pinctrl/samsung-pinctrl.txt
 	 */
-	count = fdt_count_strings(fdt, node, "samsung,pins");
+	count = fdt_stringlist_count(fdt, node, "samsung,pins");
 	if (count <= 0)
 		return -EINVAL;
 
@@ -89,9 +105,8 @@ int exynos_pinctrl_set_state(struct udevice *dev, struct udevice *config)
 	pindrv = fdtdec_get_int(fdt, node, "samsung,pin-drv", -1);
 
 	for (idx = 0; idx < count; idx++) {
-		ret = fdt_get_string_index(fdt, node, "samsung,pins",
-						idx, &name);
-		if (ret < 0)
+		name = fdt_stringlist_get(fdt, node, "samsung,pins", idx, NULL);
+		if (!name)
 			continue;
 		reg = pin_to_bank_base(dev, name, &pin_num);
 
@@ -129,13 +144,13 @@ int exynos_pinctrl_probe(struct udevice *dev)
 	if (!priv)
 		return -EINVAL;
 
-	base = dev_get_addr(dev);
+	base = dev_read_addr(dev);
 	if (base == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
 	priv->base = base;
 	priv->pin_ctrl = (struct samsung_pin_ctrl *)dev_get_driver_data(dev) +
-				dev->req_seq;
+				dev_seq(dev);
 
 	return 0;
 }

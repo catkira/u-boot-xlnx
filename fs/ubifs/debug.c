@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * This file is part of UBIFS.
  *
  * Copyright (C) 2006-2008 Nokia Corporation
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Authors: Artem Bityutskiy (Битюцкий Артём)
  *          Adrian Hunter
@@ -15,6 +14,10 @@
  * corresponding subsystem, just because they are closely related and utilize
  * various local functions of those subsystems.
  */
+
+#include <hexdump.h>
+#include <log.h>
+#include <dm/devres.h>
 
 #ifndef __UBOOT__
 #include <linux/module.h>
@@ -32,6 +35,7 @@
 static DEFINE_SPINLOCK(dbg_lock);
 #endif
 
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 static const char *get_key_fmt(int fmt)
 {
 	switch (fmt) {
@@ -227,6 +231,7 @@ static void dump_ch(const struct ubifs_ch *ch)
 	       (unsigned long long)le64_to_cpu(ch->sqnum));
 	pr_err("\tlen            %u\n", le32_to_cpu(ch->len));
 }
+#endif
 
 void ubifs_dump_inode(struct ubifs_info *c, const struct inode *inode)
 {
@@ -300,6 +305,7 @@ void ubifs_dump_inode(struct ubifs_info *c, const struct inode *inode)
 
 void ubifs_dump_node(const struct ubifs_info *c, const void *node)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int i, n;
 	union ubifs_key key;
 	const struct ubifs_ch *ch = node;
@@ -308,7 +314,7 @@ void ubifs_dump_node(const struct ubifs_info *c, const void *node)
 	/* If the magic is incorrect, just hexdump the first bytes */
 	if (le32_to_cpu(ch->magic) != UBIFS_NODE_MAGIC) {
 		pr_err("Not a node, first %zu bytes:", UBIFS_CH_SZ);
-		print_hex_dump(KERN_ERR, "", DUMP_PREFIX_OFFSET, 32, 1,
+		print_hex_dump("", DUMP_PREFIX_OFFSET, 32, 1,
 			       (void *)node, UBIFS_CH_SZ, 1);
 		return;
 	}
@@ -483,7 +489,7 @@ void ubifs_dump_node(const struct ubifs_info *c, const void *node)
 		       (int)le16_to_cpu(dn->compr_type));
 		pr_err("\tdata size      %d\n", dlen);
 		pr_err("\tdata:\n");
-		print_hex_dump(KERN_ERR, "\t", DUMP_PREFIX_OFFSET, 32, 1,
+		print_hex_dump("\t", DUMP_PREFIX_OFFSET, 32, 1,
 			       (void *)&dn->data, dlen, 0);
 		break;
 	}
@@ -543,10 +549,12 @@ void ubifs_dump_node(const struct ubifs_info *c, const void *node)
 		       (int)ch->node_type);
 	}
 	spin_unlock(&dbg_lock);
+#endif
 }
 
 void ubifs_dump_budget_req(const struct ubifs_budget_req *req)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	spin_lock(&dbg_lock);
 	pr_err("Budgeting request: new_ino %d, dirtied_ino %d\n",
 	       req->new_ino, req->dirtied_ino);
@@ -560,10 +568,12 @@ void ubifs_dump_budget_req(const struct ubifs_budget_req *req)
 	pr_err("\tdata_growth %d dd_growth     %d\n",
 	       req->data_growth, req->dd_growth);
 	spin_unlock(&dbg_lock);
+#endif
 }
 
 void ubifs_dump_lstats(const struct ubifs_lp_stats *lst)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	spin_lock(&dbg_lock);
 	pr_err("(pid %d) Lprops statistics: empty_lebs %d, idx_lebs  %d\n",
 	       current->pid, lst->empty_lebs, lst->idx_lebs);
@@ -572,6 +582,7 @@ void ubifs_dump_lstats(const struct ubifs_lp_stats *lst)
 	pr_err("\ttotal_used %lld, total_dark %lld, total_dead %lld\n",
 	       lst->total_used, lst->total_dark, lst->total_dead);
 	spin_unlock(&dbg_lock);
+#endif
 }
 
 #ifndef __UBOOT__
@@ -650,6 +661,7 @@ void ubifs_dump_budg(struct ubifs_info *c, const struct ubifs_budg_info *bi)
 
 void ubifs_dump_lprop(const struct ubifs_info *c, const struct ubifs_lprops *lp)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int i, spc, dark = 0, dead = 0;
 	struct rb_node *rb;
 	struct ubifs_bud *bud;
@@ -737,6 +749,7 @@ void ubifs_dump_lprop(const struct ubifs_info *c, const struct ubifs_lprops *lp)
 	if (lp->lnum == c->gc_lnum)
 		pr_cont(", GC LEB");
 	pr_cont(")\n");
+#endif
 }
 
 void ubifs_dump_lprops(struct ubifs_info *c)
@@ -763,6 +776,7 @@ void ubifs_dump_lprops(struct ubifs_info *c)
 
 void ubifs_dump_lpt_info(struct ubifs_info *c)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int i;
 
 	spin_lock(&dbg_lock);
@@ -797,11 +811,13 @@ void ubifs_dump_lpt_info(struct ubifs_info *c)
 		       i + c->lpt_first, c->ltab[i].free, c->ltab[i].dirty,
 		       c->ltab[i].tgc, c->ltab[i].cmt);
 	spin_unlock(&dbg_lock);
+#endif
 }
 
 void ubifs_dump_sleb(const struct ubifs_info *c,
 		     const struct ubifs_scan_leb *sleb, int offs)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	struct ubifs_scan_node *snod;
 
 	pr_err("(pid %d) start dumping scanned data from LEB %d:%d\n",
@@ -813,10 +829,12 @@ void ubifs_dump_sleb(const struct ubifs_info *c,
 		       sleb->lnum, snod->offs, snod->len);
 		ubifs_dump_node(c, snod->node);
 	}
+#endif
 }
 
 void ubifs_dump_leb(const struct ubifs_info *c, int lnum)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	struct ubifs_scan_leb *sleb;
 	struct ubifs_scan_node *snod;
 	void *buf;
@@ -851,11 +869,13 @@ void ubifs_dump_leb(const struct ubifs_info *c, int lnum)
 out:
 	vfree(buf);
 	return;
+#endif
 }
 
 void ubifs_dump_znode(const struct ubifs_info *c,
 		      const struct ubifs_znode *znode)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int n;
 	const struct ubifs_zbranch *zbr;
 	char key_buf[DBG_KEY_BUF_LEN];
@@ -890,10 +910,12 @@ void ubifs_dump_znode(const struct ubifs_info *c,
 						DBG_KEY_BUF_LEN));
 	}
 	spin_unlock(&dbg_lock);
+#endif
 }
 
 void ubifs_dump_heap(struct ubifs_info *c, struct ubifs_lpt_heap *heap, int cat)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int i;
 
 	pr_err("(pid %d) start dumping heap cat %d (%d elements)\n",
@@ -906,11 +928,13 @@ void ubifs_dump_heap(struct ubifs_info *c, struct ubifs_lpt_heap *heap, int cat)
 		       lprops->dirty, lprops->flags);
 	}
 	pr_err("(pid %d) finish dumping heap\n", current->pid);
+#endif
 }
 
 void ubifs_dump_pnode(struct ubifs_info *c, struct ubifs_pnode *pnode,
 		      struct ubifs_nnode *parent, int iip)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	int i;
 
 	pr_err("(pid %d) dumping pnode:\n", current->pid);
@@ -924,10 +948,12 @@ void ubifs_dump_pnode(struct ubifs_info *c, struct ubifs_pnode *pnode,
 		pr_err("\t%d: free %d dirty %d flags %d lnum %d\n",
 		       i, lp->free, lp->dirty, lp->flags, lp->lnum);
 	}
+#endif
 }
 
 void ubifs_dump_tnc(struct ubifs_info *c)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	struct ubifs_znode *znode;
 	int level;
 
@@ -945,14 +971,17 @@ void ubifs_dump_tnc(struct ubifs_info *c)
 		znode = ubifs_tnc_levelorder_next(c->zroot.znode, znode);
 	}
 	pr_err("(pid %d) finish dumping TNC tree\n", current->pid);
+#endif
 }
 
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 static int dump_znode(struct ubifs_info *c, struct ubifs_znode *znode,
 		      void *priv)
 {
 	ubifs_dump_znode(c, znode);
 	return 0;
 }
+#endif
 
 /**
  * ubifs_dump_index - dump the on-flash index.
@@ -963,7 +992,9 @@ static int dump_znode(struct ubifs_info *c, struct ubifs_znode *znode,
  */
 void ubifs_dump_index(struct ubifs_info *c)
 {
+#ifndef CONFIG_UBIFS_SILENCE_DEBUG_DUMP
 	dbg_walk_index(c, NULL, dump_znode, NULL);
+#endif
 }
 
 #ifndef __UBOOT__

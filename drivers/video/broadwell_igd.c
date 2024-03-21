@@ -1,30 +1,30 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * From coreboot src/soc/intel/broadwell/igd.c
  *
  * Copyright (C) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
 #include <bios_emul.h>
+#include <bootstage.h>
 #include <dm.h>
-#include <pci_rom.h>
-#include <vbe.h>
+#include <init.h>
+#include <log.h>
+#include <vesa.h>
 #include <video.h>
-#include <video_fb.h>
 #include <asm/cpu.h>
+#include <asm/global_data.h>
 #include <asm/intel_regs.h>
 #include <asm/io.h>
 #include <asm/mtrr.h>
 #include <asm/arch/cpu.h>
 #include <asm/arch/iomap.h>
 #include <asm/arch/pch.h>
-#include <linux/log2.h>
+#include <linux/delay.h>
 #include "i915_reg.h"
 
 struct broadwell_igd_priv {
-	GraphicDevice ctfb;
 	u8 *regs;
 };
 
@@ -323,10 +323,7 @@ err:
 static unsigned long gtt_read(struct broadwell_igd_priv *priv,
 			      unsigned long reg)
 {
-	u32 val;
-
-	val = readl(priv->regs + reg);
-	return val;
+	return readl(priv->regs + reg);
 }
 
 static void gtt_write(struct broadwell_igd_priv *priv, unsigned long reg,
@@ -360,7 +357,7 @@ static int gtt_poll(struct broadwell_igd_priv *priv, u32 reg, u32 mask,
 
 static void igd_setup_panel(struct udevice *dev)
 {
-	struct broadwell_igd_plat *plat = dev_get_platdata(dev);
+	struct broadwell_igd_plat *plat = dev_get_plat(dev);
 	struct broadwell_igd_priv *priv = dev_get_priv(dev);
 	u32 reg32;
 
@@ -402,7 +399,7 @@ static void igd_setup_panel(struct udevice *dev)
 
 static int igd_cdclk_init_haswell(struct udevice *dev)
 {
-	struct broadwell_igd_plat *plat = dev_get_platdata(dev);
+	struct broadwell_igd_plat *plat = dev_get_plat(dev);
 	struct broadwell_igd_priv *priv = dev_get_priv(dev);
 	int cdclk = plat->cdclk;
 	u16 devid;
@@ -476,7 +473,7 @@ err:
 
 static int igd_cdclk_init_broadwell(struct udevice *dev)
 {
-	struct broadwell_igd_plat *plat = dev_get_platdata(dev);
+	struct broadwell_igd_plat *plat = dev_get_plat(dev);
 	struct broadwell_igd_priv *priv = dev_get_priv(dev);
 	int cdclk = plat->cdclk;
 	u32 dpdiv, lpcll, pwctl, cdset;
@@ -571,7 +568,7 @@ u8 systemagent_revision(struct udevice *bus)
 
 static int igd_pre_init(struct udevice *dev, bool is_broadwell)
 {
-	struct broadwell_igd_plat *plat = dev_get_platdata(dev);
+	struct broadwell_igd_plat *plat = dev_get_plat(dev);
 	struct broadwell_igd_priv *priv = dev_get_priv(dev);
 	u32 rp1_gfx_freq;
 	int ret;
@@ -665,12 +662,10 @@ static int broadwell_igd_int15_handler(void)
 
 static int broadwell_igd_probe(struct udevice *dev)
 {
-	struct video_uc_platdata *plat = dev_get_uclass_platdata(dev);
+	struct video_uc_plat *plat = dev_get_uclass_plat(dev);
 	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
-	struct broadwell_igd_priv *priv = dev_get_priv(dev);
 	bool is_broadwell;
-	GraphicDevice *gdev = &priv->ctfb;
-	int bits_per_pixel;
+	ulong fbbase;
 	int ret;
 
 	if (!ll_boot_init()) {
@@ -686,13 +681,9 @@ static int broadwell_igd_probe(struct udevice *dev)
 	debug("%s: is_broadwell=%d\n", __func__, is_broadwell);
 	ret = igd_pre_init(dev, is_broadwell);
 	if (!ret) {
-		ret = dm_pci_run_vga_bios(dev, broadwell_igd_int15_handler,
-					  PCI_ROM_USE_NATIVE |
-					  PCI_ROM_ALLOW_FALLBACK);
-		if (ret) {
-			printf("failed to run video BIOS: %d\n", ret);
-			ret = -EIO;
-		}
+		ret = vesa_setup_video(dev, broadwell_igd_int15_handler);
+		if (ret)
+			debug("failed to run video BIOS: %d\n", ret);
 	}
 	if (!ret)
 		ret = igd_post_init(dev, is_broadwell);
@@ -700,13 +691,9 @@ static int broadwell_igd_probe(struct udevice *dev)
 	if (ret)
 		return ret;
 
-	if (vbe_get_video_info(gdev)) {
-		printf("No video mode configured\n");
-		return -ENXIO;
-	}
-
-	/* Use write-through for the graphics memory, 256MB */
-	ret = mtrr_add_request(MTRR_TYPE_WRTHROUGH, gdev->pciBase, 256 << 20);
+	/* Use write-combining for the graphics memory, 256MB */
+	fbbase = IS_ENABLED(CONFIG_VIDEO_COPY) ? plat->copy_base : plat->base;
+	ret = mtrr_add_request(MTRR_TYPE_WRCOMB, fbbase, 256 << 20);
 	if (!ret)
 		ret = mtrr_commit(true);
 	if (ret && ret != -ENOSYS) {
@@ -714,26 +701,17 @@ static int broadwell_igd_probe(struct udevice *dev)
 		       ret);
 	}
 
-	bits_per_pixel = gdev->gdfBytesPP * 8;
-	sprintf(gdev->modeIdent, "%dx%dx%d", gdev->winSizeX, gdev->winSizeY,
-		bits_per_pixel);
-	printf("%s\n", gdev->modeIdent);
-	uc_priv->xsize = gdev->winSizeX;
-	uc_priv->ysize = gdev->winSizeY;
-	uc_priv->bpix = ilog2(bits_per_pixel);
-	plat->base = gdev->pciBase;
-	plat->size = gdev->memSize;
-	debug("fb=%x, size %x, display size=%d %d %d\n", gdev->pciBase,
-	      gdev->memSize, uc_priv->xsize, uc_priv->ysize, uc_priv->bpix);
+	debug("fb=%lx, size %x, display size=%d %d %d\n", plat->base,
+	      plat->size, uc_priv->xsize, uc_priv->ysize, uc_priv->bpix);
 
 	return 0;
 }
 
-static int broadwell_igd_ofdata_to_platdata(struct udevice *dev)
+static int broadwell_igd_of_to_plat(struct udevice *dev)
 {
-	struct broadwell_igd_plat *plat = dev_get_platdata(dev);
+	struct broadwell_igd_plat *plat = dev_get_plat(dev);
 	struct broadwell_igd_priv *priv = dev_get_priv(dev);
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 	const void *blob = gd->fdt_blob;
 
 	if (fdtdec_get_int_array(blob, node, "intel,dp-hotplug",
@@ -777,6 +755,17 @@ static int broadwell_igd_ofdata_to_platdata(struct udevice *dev)
 	return 0;
 }
 
+static int broadwell_igd_bind(struct udevice *dev)
+{
+	struct video_uc_plat *uc_plat = dev_get_uclass_plat(dev);
+
+	/* Set the maximum supported resolution */
+	uc_plat->size = 2560 * 1600 * 4;
+	log_debug("%s: Frame buffer size %x\n", __func__, uc_plat->size);
+
+	return 0;
+}
+
 static const struct video_ops broadwell_igd_ops = {
 };
 
@@ -790,8 +779,9 @@ U_BOOT_DRIVER(broadwell_igd) = {
 	.id	= UCLASS_VIDEO,
 	.of_match = broadwell_igd_ids,
 	.ops	= &broadwell_igd_ops,
-	.ofdata_to_platdata = broadwell_igd_ofdata_to_platdata,
+	.of_to_plat = broadwell_igd_of_to_plat,
+	.bind	= broadwell_igd_bind,
 	.probe	= broadwell_igd_probe,
-	.priv_auto_alloc_size	= sizeof(struct broadwell_igd_priv),
-	.platdata_auto_alloc_size	= sizeof(struct broadwell_igd_plat),
+	.priv_auto	= sizeof(struct broadwell_igd_priv),
+	.plat_auto	= sizeof(struct broadwell_igd_plat),
 };

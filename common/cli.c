@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
@@ -5,18 +6,20 @@
  * Add to readline cmdline-editing by
  * (C) Copyright 2005
  * JinHua Luo, GuangDong Linux Center, <luo.jinhua@gd-linux.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <bootstage.h>
 #include <cli.h>
 #include <cli_hush.h>
+#include <command.h>
 #include <console.h>
+#include <env.h>
 #include <fdtdec.h>
+#include <hang.h>
 #include <malloc.h>
-
-DECLARE_GLOBAL_DATA_PTR;
+#include <asm/global_data.h>
+#include <dm/ofnode.h>
 
 #ifdef CONFIG_CMDLINE
 /*
@@ -24,11 +27,11 @@ DECLARE_GLOBAL_DATA_PTR;
  *
  * @param cmd	Command to run
  * @param flag	Execution flags (CMD_FLAG_...)
- * @return 0 on success, or != 0 on error.
+ * Return: 0 on success, or != 0 on error.
  */
 int run_command(const char *cmd, int flag)
 {
-#ifndef CONFIG_HUSH_PARSER
+#if !CONFIG_IS_ENABLED(HUSH_PARSER)
 	/*
 	 * cli_run_command can return 0 or 1 for success, so clean up
 	 * its result.
@@ -51,7 +54,7 @@ int run_command(const char *cmd, int flag)
  *
  * @param cmd	Command to run
  * @param flag	Execution flags (CMD_FLAG_...)
- * @return 0 (not repeatable) or 1 (repeatable) on success, -1 on error.
+ * Return: 0 (not repeatable) or 1 (repeatable) on success, -1 on error.
  */
 int run_command_repeatable(const char *cmd, int flag)
 {
@@ -68,6 +71,13 @@ int run_command_repeatable(const char *cmd, int flag)
 
 	return 0;
 #endif
+}
+#else
+__weak int board_run_command(const char *cmdline)
+{
+	printf("## Commands are disabled. Please enable CONFIG_CMDLINE.\n");
+
+	return 1;
 }
 #endif /* CONFIG_CMDLINE */
 
@@ -116,10 +126,25 @@ int run_command_list(const char *cmd, int len, int flag)
 	return rcode;
 }
 
+int run_commandf(const char *fmt, ...)
+{
+	va_list args;
+	char cmd[128];
+	int i, ret;
+
+	va_start(args, fmt);
+	i = vsnprintf(cmd, sizeof(cmd), fmt, args);
+	va_end(args);
+
+	ret = run_command(cmd, 0);
+
+	return ret;
+}
+
 /****************************************************************************/
 
 #if defined(CONFIG_CMD_RUN)
-int do_run(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_run(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	int i;
 
@@ -129,7 +154,7 @@ int do_run(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	for (i = 1; i < argc; ++i) {
 		char *arg;
 
-		arg = getenv(argv[i]);
+		arg = env_get(argv[i]);
 		if (arg == NULL) {
 			printf("## Error: \"%s\" not defined\n", argv[i]);
 			return 1;
@@ -146,7 +171,7 @@ int do_run(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 bool cli_process_fdt(const char **cmdp)
 {
 	/* Allow the fdt to override the boot command */
-	char *env = fdtdec_get_config_string(gd->fdt_blob, "bootcmd");
+	const char *env = ofnode_conf_read_str("bootcmd");
 	if (env)
 		*cmdp = env;
 	/*
@@ -154,7 +179,7 @@ bool cli_process_fdt(const char **cmdp)
 	 * Always use 'env' in this case, since bootsecure requres that the
 	 * bootcmd was specified in the FDT too.
 	 */
-	return fdtdec_get_config_int(gd->fdt_blob, "bootsecure", 0) != 0;
+	return ofnode_conf_read_int("bootsecure", 0);
 }
 
 /*
@@ -173,7 +198,7 @@ bool cli_process_fdt(const char **cmdp)
 void cli_secure_boot_cmd(const char *cmd)
 {
 #ifdef CONFIG_CMDLINE
-	cmd_tbl_t *cmdtp;
+	struct cmd_tbl *cmdtp;
 #endif
 	int rc;
 
@@ -214,6 +239,7 @@ err:
 
 void cli_loop(void)
 {
+	bootstage_mark(BOOTSTAGE_ID_ENTER_CLI_LOOP);
 #ifdef CONFIG_HUSH_PARSER
 	parse_file_outer();
 	/* This point is never reached */

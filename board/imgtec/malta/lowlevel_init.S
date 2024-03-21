@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2013 Gabor Juhos <juhosg@openwrt.org>
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <config.h>
@@ -28,12 +27,6 @@
 
 	.globl	lowlevel_init
 lowlevel_init:
-	/* disable any L2 cache for now */
-	sync
-	mfc0	t0, CP0_CONFIG, 2
-	ori	t0, t0, 0x1 << 12
-	mtc0	t0, CP0_CONFIG, 2
-
 	/* detect the core card */
 	PTR_LI	t0, CKSEG1ADDR(MALTA_REVISION)
 	lw	t0, 0(t0)
@@ -125,7 +118,7 @@ _msc01:
 	/* setup basic address decode */
 	PTR_LI	t0, CKSEG1ADDR(MALTA_MSC01_BIU_BASE)
 	li	t1, 0x0
-	li	t2, -CONFIG_SYS_MEM_SIZE
+	li	t2, -CONFIG_SYS_SDRAM_SIZE
 	sw	t1, MSC01_BIU_MCBAS1L_OFS(t0)
 	sw	t2, MSC01_BIU_MCMSK1L_OFS(t0)
 	sw	t1, MSC01_BIU_MCBAS2L_OFS(t0)
@@ -175,7 +168,7 @@ _msc01:
 	sw	t3, MSC01_PCI_SC2PIOMAPL_OFS(t0)
 
 	/* setup PCI_BAR0 memory window */
-	li	t1, -CONFIG_SYS_MEM_SIZE
+	li	t1, -CONFIG_SYS_SDRAM_SIZE
 	sw	t1, MSC01_PCI_BAR0_OFS(t0)
 
 	/* setup PCI to SysCon/CPU translation */

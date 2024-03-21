@@ -1,27 +1,28 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Udoo
  * Author: Tungyi Lin <tungyilin1127@gmail.com>
  *         Richard Hu <hakahu@gmail.com>
  * Based on board/wandboard/spl.c
- * SPDX-License-Identifier:     GPL-2.0+
  */
 
+#include <common.h>
+#include <init.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/imx-regs.h>
 #include <asm/arch/iomux.h>
 #include <asm/arch/mx6-pins.h>
-#include <asm/errno.h>
+#include <linux/delay.h>
+#include <linux/errno.h>
 #include <asm/gpio.h>
-#include <asm/imx-common/iomux-v3.h>
-#include <asm/imx-common/video.h>
+#include <asm/mach-imx/iomux-v3.h>
+#include <asm/mach-imx/video.h>
 #include <mmc.h>
-#include <fsl_esdhc.h>
+#include <fsl_esdhc_imx.h>
 #include <asm/arch/crm_regs.h>
 #include <asm/io.h>
 #include <asm/arch/sys_proto.h>
 #include <spl.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 #if defined(CONFIG_SPL_BUILD)
 #include <asm/arch/mx6-ddr.h>
@@ -193,6 +194,8 @@ static struct mx6_ddr_sysinfo mem_qdl = {
 	.mif3_mode = 3,
 	.rst_to_cke = 0x23,
 	.sde_to_rst = 0x10,
+	.refsel = 1,	/* Refresh cycles at 32KHz */
+	.refr = 7,	/* 8 refresh commands per refresh cycle */
 };
 
 static void ccgr_init(void)
@@ -207,17 +210,6 @@ static void ccgr_init(void)
 	writel(0x00FFF300, &ccm->CCGR4);
 	writel(0x0F0000C3, &ccm->CCGR5);
 	writel(0x000003FF, &ccm->CCGR6);
-}
-
-static void gpr_init(void)
-{
-	struct iomuxc *iomux = (struct iomuxc *)IOMUXC_BASE_ADDR;
-
-	/* enable AXI cache for VDOA/VPU/IPU */
-	writel(0xF00000FF, &iomux->gpr[4]);
-	/* set IPU AXI-id0 Qos=0xf(bypass) AXI-id1 Qos=0x7 */
-	writel(0x007F007F, &iomux->gpr[6]);
-	writel(0x007F007F, &iomux->gpr[7]);
 }
 
 static void spl_dram_init(void)
@@ -261,11 +253,40 @@ void board_init_f(ulong dummy)
 
 	/* DDR initialization */
 	spl_dram_init();
+}
 
-	/* Clear the BSS. */
-	memset(__bss_start, 0, __bss_end - __bss_start);
+#define USDHC3_CD_GPIO		IMX_GPIO_NR(7, 0)
 
-	/* load/boot image from boot device */
-	board_init_r(NULL, 0);
+#define USDHC_PAD_CTRL (PAD_CTL_PUS_47K_UP |			\
+	PAD_CTL_SPEED_LOW | PAD_CTL_DSE_80ohm |		\
+	PAD_CTL_SRE_FAST  | PAD_CTL_HYS)
+
+static struct fsl_esdhc_cfg usdhc_cfg[2] = {
+	{USDHC3_BASE_ADDR},
+};
+
+static const iomux_v3_cfg_t usdhc3_pads[] = {
+	IOMUX_PADS(PAD_SD3_CLK__SD3_CLK    | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_CMD__SD3_CMD    | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_DAT0__SD3_DATA0 | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_DAT1__SD3_DATA1 | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_DAT2__SD3_DATA2 | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_DAT3__SD3_DATA3 | MUX_PAD_CTRL(USDHC_PAD_CTRL)),
+	IOMUX_PADS(PAD_SD3_DAT5__GPIO7_IO00  | MUX_PAD_CTRL(NO_PAD_CTRL)),
+};
+
+int board_mmc_getcd(struct mmc *mmc)
+{
+	return !gpio_get_value(USDHC3_CD_GPIO);
+}
+
+int board_mmc_init(struct bd_info *bis)
+{
+	SETUP_IOMUX_PADS(usdhc3_pads);
+	usdhc_cfg[0].sdhc_clk = mxc_get_clock(MXC_ESDHC3_CLK);
+	usdhc_cfg[0].max_bus_width = 4;
+	gpio_direction_input(USDHC3_CD_GPIO);
+
+	return fsl_esdhc_initialize(bis, &usdhc_cfg[0]);
 }
 #endif

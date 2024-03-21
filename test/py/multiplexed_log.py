@@ -1,12 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0
 # Copyright (c) 2015 Stephen Warren
 # Copyright (c) 2015-2016, NVIDIA CORPORATION. All rights reserved.
-#
-# SPDX-License-Identifier: GPL-2.0
 
-# Generate an HTML-formatted log file containing multiple streams of data,
-# each represented in a well-delineated/-structured fashion.
+"""
+Generate an HTML-formatted log file containing multiple streams of data,
+each represented in a well-delineated/-structured fashion.
+"""
 
-import cgi
+import datetime
+import html
 import os.path
 import shutil
 import subprocess
@@ -51,7 +53,7 @@ class LogfileStream(object):
         """Write data to the log stream.
 
         Args:
-            data: The data to write tot he file.
+            data: The data to write to the file.
             implicit: Boolean indicating whether data actually appeared in the
                 stream, or was implicitly generated. A valid use-case is to
                 repeat a shell prompt at the start of each separate log
@@ -64,7 +66,8 @@ class LogfileStream(object):
 
         self.logfile.write(self, data, implicit)
         if self.chained_file:
-            self.chained_file.write(data)
+            # Chained file is console, convert things a little
+            self.chained_file.write((data.encode('ascii', 'replace')).decode())
 
     def flush(self):
         """Flush the log stream, to ensure correct log interleaving.
@@ -101,13 +104,18 @@ class RunAndLog(object):
         self.logfile = logfile
         self.name = name
         self.chained_file = chained_file
+        self.output = None
+        self.exit_status = None
 
     def close(self):
         """Clean up any resources managed by this object."""
         pass
 
-    def run(self, cmd, cwd=None, ignore_errors=False):
+    def run(self, cmd, cwd=None, ignore_errors=False, stdin=None):
         """Run a command as a sub-process, and log the results.
+
+        The output is available at self.output which can be useful if there is
+        an exception.
 
         Args:
             cmd: The command to execute.
@@ -117,9 +125,10 @@ class RunAndLog(object):
                 function will simply return if the command cannot be executed
                 or exits with an error code, otherwise an exception will be
                 raised if such problems occur.
+            stdin: Input string to pass to the command as stdin (or None)
 
         Returns:
-            Nothing.
+            The output as a string.
         """
 
         msg = '+' + ' '.join(cmd) + '\n'
@@ -129,8 +138,13 @@ class RunAndLog(object):
 
         try:
             p = subprocess.Popen(cmd, cwd=cwd,
-                stdin=None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            (stdout, stderr) = p.communicate()
+                stdin=subprocess.PIPE if stdin else None,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            (stdout, stderr) = p.communicate(input=stdin)
+            if stdout is not None:
+                stdout = stdout.decode('utf-8')
+            if stderr is not None:
+                stderr = stderr.decode('utf-8')
             output = ''
             if stdout:
                 if stderr:
@@ -153,16 +167,22 @@ class RunAndLog(object):
         if output and not output.endswith('\n'):
             output += '\n'
         if exit_status and not exception and not ignore_errors:
-            exception = Exception('Exit code: ' + str(exit_status))
+            exception = ValueError('Exit code: ' + str(exit_status))
         if exception:
             output += str(exception) + '\n'
         self.logfile.write(self, output)
         if self.chained_file:
             self.chained_file.write(output)
+        self.logfile.timestamp()
+
+        # Store the output so it can be accessed if we raise an exception.
+        self.output = output
+        self.exit_status = exit_status
         if exception:
             raise exception
+        return output
 
-class SectionCtxMgr(object):
+class SectionCtxMgr:
     """A context manager for Python's "with" statement, which allows a certain
     portion of test code to be logged to a separate section of the log file.
     Objects of this type should be created by factory functions in the Logfile
@@ -190,7 +210,7 @@ class SectionCtxMgr(object):
     def __exit__(self, extype, value, traceback):
         self.log.end_section(self.marker)
 
-class Logfile(object):
+class Logfile:
     """Generates an HTML-formatted log file containing multiple streams of
     data, each represented in a well-delineated/-structured fashion."""
 
@@ -204,11 +224,15 @@ class Logfile(object):
             Nothing.
         """
 
-        self.f = open(fn, 'wt')
+        self.f = open(fn, 'wt', encoding='utf-8')
         self.last_stream = None
         self.blocks = []
         self.cur_evt = 1
         self.anchor = 0
+        self.timestamp_start = self._get_time()
+        self.timestamp_prev = self.timestamp_start
+        self.timestamp_blocks = []
+        self.seen_warning = False
 
         shutil.copy(mod_dir + '/multiplexed_log.css', os.path.dirname(fn))
         self.f.write('''\
@@ -237,6 +261,7 @@ $(document).ready(function () {
     passed_bcs = passed_bcs.not(":has(.status-xfail)");
     passed_bcs = passed_bcs.not(":has(.status-xpass)");
     passed_bcs = passed_bcs.not(":has(.status-skipped)");
+    passed_bcs = passed_bcs.not(":has(.status-warning)");
     // Hide the passed blocks
     passed_bcs.addClass("hidden");
     // Flip the expand/contract button hiding for those blocks.
@@ -298,8 +323,9 @@ $(document).ready(function () {
 
     # The set of characters that should be represented as hexadecimal codes in
     # the log file.
-    _nonprint = ('%' + ''.join(chr(c) for c in range(0, 32) if c not in (9, 10)) +
-                 ''.join(chr(c) for c in range(127, 256)))
+    _nonprint = {ord('%')}
+    _nonprint.update(c for c in range(0, 32) if c not in (9, 10))
+    _nonprint.update(range(127, 256))
 
     def _escape(self, data):
         """Render data format suitable for inclusion in an HTML document.
@@ -315,9 +341,9 @@ $(document).ready(function () {
         """
 
         data = data.replace(chr(13), '')
-        data = ''.join((c in self._nonprint) and ('%%%02x' % ord(c)) or
+        data = ''.join((ord(c) in self._nonprint) and ('%%%02x' % ord(c)) or
                        c for c in data)
-        data = cgi.escape(data)
+        data = html.escape(data)
         return data
 
     def _terminate_stream(self):
@@ -355,13 +381,13 @@ $(document).ready(function () {
 
         self._terminate_stream()
         self.f.write('<div class="' + note_type + '">\n')
-        if anchor:
-            self.f.write('<a href="#%s">\n' % anchor)
         self.f.write('<pre>')
-        self.f.write(self._escape(msg))
-        self.f.write('\n</pre>\n')
         if anchor:
-            self.f.write('</a>\n')
+            self.f.write('<a href="#%s">' % anchor)
+        self.f.write(self._escape(msg))
+        if anchor:
+            self.f.write('</a>')
+        self.f.write('\n</pre>\n')
         self.f.write('</div>\n')
 
     def start_section(self, marker, anchor=None):
@@ -378,6 +404,7 @@ $(document).ready(function () {
 
         self._terminate_stream()
         self.blocks.append(marker)
+        self.timestamp_blocks.append(self._get_time())
         if not anchor:
             self.anchor += 1
             anchor = str(self.anchor)
@@ -386,6 +413,7 @@ $(document).ready(function () {
         self.f.write('<div class="section-header block-header">Section: ' +
                      blk_path + '</div>\n')
         self.f.write('<div class="section-content block-content">\n')
+        self.timestamp()
 
         return anchor
 
@@ -406,6 +434,11 @@ $(document).ready(function () {
             raise Exception('Block nesting mismatch: "%s" "%s"' %
                             (marker, '/'.join(self.blocks)))
         self._terminate_stream()
+        timestamp_now = self._get_time()
+        timestamp_section_start = self.timestamp_blocks.pop()
+        delta_section = timestamp_now - timestamp_section_start
+        self._note("timestamp",
+            "TIME: SINCE-SECTION: " + str(delta_section))
         blk_path = '/'.join(self.blocks)
         self.f.write('<div class="section-trailer block-trailer">' +
                      'End section: ' + blk_path + '</div>\n')
@@ -456,7 +489,22 @@ $(document).ready(function () {
             Nothing.
         """
 
+        self.seen_warning = True
         self._note("warning", msg)
+
+    def get_and_reset_warning(self):
+        """Get and reset the log warning flag.
+
+        Args:
+            None
+
+        Returns:
+            Whether a warning was seen since the last call.
+        """
+
+        ret = self.seen_warning
+        self.seen_warning = False
+        return ret
 
     def info(self, msg):
         """Write an informational note to the log file.
@@ -482,6 +530,31 @@ $(document).ready(function () {
 
         self._note("action", msg)
 
+    def _get_time(self):
+        return datetime.datetime.now()
+
+    def timestamp(self):
+        """Write a timestamp to the log file.
+
+        Args:
+            None
+
+        Returns:
+            Nothing.
+        """
+
+        timestamp_now = self._get_time()
+        delta_prev = timestamp_now - self.timestamp_prev
+        delta_start = timestamp_now - self.timestamp_start
+        self.timestamp_prev = timestamp_now
+
+        self._note("timestamp",
+            "TIME: NOW: " + timestamp_now.strftime("%Y/%m/%d %H:%M:%S.%f"))
+        self._note("timestamp",
+            "TIME: SINCE-PREV: " + str(delta_prev))
+        self._note("timestamp",
+            "TIME: SINCE-START: " + str(delta_start))
+
     def status_pass(self, msg, anchor=None):
         """Write a note to the log file describing test(s) which passed.
 
@@ -494,6 +567,19 @@ $(document).ready(function () {
         """
 
         self._note("status-pass", msg, anchor)
+
+    def status_warning(self, msg, anchor=None):
+        """Write a note to the log file describing test(s) which passed.
+
+        Args:
+            msg: A message describing the passed test(s).
+            anchor: Optional internal link target.
+
+        Returns:
+            Nothing.
+        """
+
+        self._note("status-warning", msg, anchor)
 
     def status_skipped(self, msg, anchor=None):
         """Write a note to the log file describing skipped test(s).

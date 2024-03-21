@@ -1,24 +1,27 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2007-2009 Michal Simek
  * (C) Copyright 2003 Xilinx Inc.
  *
  * Michal SIMEK <monstr@monstr.eu>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <log.h>
 #include <net.h>
 #include <config.h>
 #include <dm.h>
 #include <console.h>
 #include <malloc.h>
-#include <asm/io.h>
+#include <asm/global_data.h>
 #include <phy.h>
 #include <miiphy.h>
 #include <fdtdec.h>
-#include <asm-generic/errno.h>
+#include <linux/delay.h>
+#include <linux/errno.h>
+#include <linux/io.h>
 #include <linux/kernel.h>
+#include <eth_phy.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -109,12 +112,12 @@ static void xemaclite_alignedread(u32 *srcptr, void *destptr, u32 bytecount)
 	/* Word aligned buffer, no correction needed. */
 	to32ptr = (u32 *) destptr;
 	while (bytecount > 3) {
-		*to32ptr++ = *from32ptr++;
+		*to32ptr++ = __raw_readl(from32ptr++);
 		bytecount -= 4;
 	}
 	to8ptr = (u8 *) to32ptr;
 
-	alignbuffer = *from32ptr++;
+	alignbuffer = __raw_readl(from32ptr++);
 	from8ptr = (u8 *) &alignbuffer;
 
 	for (i = 0; i < bytecount; i++)
@@ -132,8 +135,7 @@ static void xemaclite_alignedwrite(void *srcptr, u32 *destptr, u32 bytecount)
 
 	from32ptr = (u32 *) srcptr;
 	while (bytecount > 3) {
-
-		*to32ptr++ = *from32ptr++;
+		__raw_writel(*from32ptr++, to32ptr++);
 		bytecount -= 4;
 	}
 
@@ -144,7 +146,7 @@ static void xemaclite_alignedwrite(void *srcptr, u32 *destptr, u32 bytecount)
 	for (i = 0; i < bytecount; i++)
 		*to8ptr++ = *from8ptr++;
 
-	*to32ptr++ = alignbuffer;
+	__raw_writel(alignbuffer, to32ptr++);
 }
 
 static int wait_for_bit(const char *func, u32 *reg, const u32 mask,
@@ -154,7 +156,7 @@ static int wait_for_bit(const char *func, u32 *reg, const u32 mask,
 	unsigned long start = get_timer(0);
 
 	while (1) {
-		val = readl(reg);
+		val = __raw_readl(reg);
 
 		if (!set)
 			val = ~val;
@@ -193,16 +195,17 @@ static u32 phyread(struct xemaclite *emaclite, u32 phyaddress, u32 registernum,
 	if (mdio_wait(regs))
 		return 1;
 
-	u32 ctrl_reg = in_be32(&regs->mdioctrl);
-	out_be32(&regs->mdioaddr, XEL_MDIOADDR_OP_MASK |
-		 ((phyaddress << XEL_MDIOADDR_PHYADR_SHIFT) | registernum));
-	out_be32(&regs->mdioctrl, ctrl_reg | XEL_MDIOCTRL_MDIOSTS_MASK);
+	u32 ctrl_reg = __raw_readl(&regs->mdioctrl);
+	__raw_writel(XEL_MDIOADDR_OP_MASK
+		| ((phyaddress << XEL_MDIOADDR_PHYADR_SHIFT)
+		| registernum), &regs->mdioaddr);
+	__raw_writel(ctrl_reg | XEL_MDIOCTRL_MDIOSTS_MASK, &regs->mdioctrl);
 
 	if (mdio_wait(regs))
 		return 1;
 
 	/* Read data */
-	*data = in_be32(&regs->mdiord);
+	*data = __raw_readl(&regs->mdiord);
 	return 0;
 }
 
@@ -220,11 +223,12 @@ static u32 phywrite(struct xemaclite *emaclite, u32 phyaddress, u32 registernum,
 	 * Data register. Finally, set the Status bit in the MDIO Control
 	 * register to start a MDIO write transaction.
 	 */
-	u32 ctrl_reg = in_be32(&regs->mdioctrl);
-	out_be32(&regs->mdioaddr, ~XEL_MDIOADDR_OP_MASK &
-		 ((phyaddress << XEL_MDIOADDR_PHYADR_SHIFT) | registernum));
-	out_be32(&regs->mdiowr, data);
-	out_be32(&regs->mdioctrl, ctrl_reg | XEL_MDIOCTRL_MDIOSTS_MASK);
+	u32 ctrl_reg = __raw_readl(&regs->mdioctrl);
+	__raw_writel(~XEL_MDIOADDR_OP_MASK
+		& ((phyaddress << XEL_MDIOADDR_PHYADR_SHIFT)
+		| registernum), &regs->mdioaddr);
+	__raw_writel(data, &regs->mdiowr);
+	__raw_writel(ctrl_reg | XEL_MDIOCTRL_MDIOSTS_MASK, &regs->mdioctrl);
 
 	if (mdio_wait(regs))
 		return 1;
@@ -318,7 +322,7 @@ static int setup_phy(struct udevice *dev)
 static int emaclite_start(struct udevice *dev)
 {
 	struct xemaclite *emaclite = dev_get_priv(dev);
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 	struct emaclite_regs *regs = emaclite->regs;
 
 	debug("EmacLite Initialization Started\n");
@@ -327,27 +331,27 @@ static int emaclite_start(struct udevice *dev)
  * TX - TX_PING & TX_PONG initialization
  */
 	/* Restart PING TX */
-	out_be32(&regs->tx_ping_tsr, 0);
+	__raw_writel(0, &regs->tx_ping_tsr);
 	/* Copy MAC address */
 	xemaclite_alignedwrite(pdata->enetaddr, &regs->tx_ping,
 			       ENET_ADDR_LENGTH);
 	/* Set the length */
-	out_be32(&regs->tx_ping_tplr, ENET_ADDR_LENGTH);
+	__raw_writel(ENET_ADDR_LENGTH, &regs->tx_ping_tplr);
 	/* Update the MAC address in the EMAC Lite */
-	out_be32(&regs->tx_ping_tsr, XEL_TSR_PROG_MAC_ADDR);
+	__raw_writel(XEL_TSR_PROG_MAC_ADDR, &regs->tx_ping_tsr);
 	/* Wait for EMAC Lite to finish with the MAC address update */
-	while ((in_be32 (&regs->tx_ping_tsr) &
+	while ((__raw_readl(&regs->tx_ping_tsr) &
 		XEL_TSR_PROG_MAC_ADDR) != 0)
 		;
 
 	if (emaclite->txpp) {
 		/* The same operation with PONG TX */
-		out_be32(&regs->tx_pong_tsr, 0);
+		__raw_writel(0, &regs->tx_pong_tsr);
 		xemaclite_alignedwrite(pdata->enetaddr, &regs->tx_pong,
 				       ENET_ADDR_LENGTH);
-		out_be32(&regs->tx_pong_tplr, ENET_ADDR_LENGTH);
-		out_be32(&regs->tx_pong_tsr, XEL_TSR_PROG_MAC_ADDR);
-		while ((in_be32(&regs->tx_pong_tsr) &
+		__raw_writel(ENET_ADDR_LENGTH, &regs->tx_pong_tplr);
+		__raw_writel(XEL_TSR_PROG_MAC_ADDR, &regs->tx_pong_tsr);
+		while ((__raw_readl(&regs->tx_pong_tsr) &
 		       XEL_TSR_PROG_MAC_ADDR) != 0)
 			;
 	}
@@ -356,13 +360,13 @@ static int emaclite_start(struct udevice *dev)
  * RX - RX_PING & RX_PONG initialization
  */
 	/* Write out the value to flush the RX buffer */
-	out_be32(&regs->rx_ping_rsr, XEL_RSR_RECV_IE_MASK);
+	__raw_writel(XEL_RSR_RECV_IE_MASK, &regs->rx_ping_rsr);
 
 	if (emaclite->rxpp)
-		out_be32(&regs->rx_pong_rsr, XEL_RSR_RECV_IE_MASK);
+		__raw_writel(XEL_RSR_RECV_IE_MASK, &regs->rx_pong_rsr);
 
-	out_be32(&regs->mdioctrl, XEL_MDIOCTRL_MDIOEN_MASK);
-	if (in_be32(&regs->mdioctrl) & XEL_MDIOCTRL_MDIOEN_MASK)
+	__raw_writel(XEL_MDIOCTRL_MDIOEN_MASK, &regs->mdioctrl);
+	if (__raw_readl(&regs->mdioctrl) & XEL_MDIOCTRL_MDIOEN_MASK)
 		if (!setup_phy(dev))
 			return -1;
 
@@ -379,9 +383,9 @@ static int xemaclite_txbufferavailable(struct xemaclite *emaclite)
 	 * Read the other buffer register
 	 * and determine if the other buffer is available
 	 */
-	tmp = ~in_be32(&regs->tx_ping_tsr);
+	tmp = ~__raw_readl(&regs->tx_ping_tsr);
 	if (emaclite->txpp)
-		tmp |= ~in_be32(&regs->tx_pong_tsr);
+		tmp |= ~__raw_readl(&regs->tx_pong_tsr);
 
 	return !(tmp & XEL_TSR_XMIT_BUSY_MASK);
 }
@@ -405,40 +409,42 @@ static int emaclite_send(struct udevice *dev, void *ptr, int len)
 	if (!maxtry) {
 		printf("Error: Timeout waiting for ethernet TX buffer\n");
 		/* Restart PING TX */
-		out_be32(&regs->tx_ping_tsr, 0);
+		__raw_writel(0, &regs->tx_ping_tsr);
 		if (emaclite->txpp) {
-			out_be32(&regs->tx_pong_tsr, 0);
+			__raw_writel(0, &regs->tx_pong_tsr);
 		}
 		return -1;
 	}
 
 	/* Determine if the expected buffer address is empty */
-	reg = in_be32(&regs->tx_ping_tsr);
+	reg = __raw_readl(&regs->tx_ping_tsr);
 	if ((reg & XEL_TSR_XMIT_BUSY_MASK) == 0) {
 		debug("Send packet from tx_ping buffer\n");
 		/* Write the frame to the buffer */
 		xemaclite_alignedwrite(ptr, &regs->tx_ping, len);
-		out_be32(&regs->tx_ping_tplr, len &
-			(XEL_TPLR_LENGTH_MASK_HI | XEL_TPLR_LENGTH_MASK_LO));
-		reg = in_be32(&regs->tx_ping_tsr);
+		__raw_writel(len
+			& (XEL_TPLR_LENGTH_MASK_HI | XEL_TPLR_LENGTH_MASK_LO),
+		       &regs->tx_ping_tplr);
+		reg = __raw_readl(&regs->tx_ping_tsr);
 		reg |= XEL_TSR_XMIT_BUSY_MASK;
-		out_be32(&regs->tx_ping_tsr, reg);
+		__raw_writel(reg, &regs->tx_ping_tsr);
 		return 0;
 	}
 
 	if (emaclite->txpp) {
 		/* Determine if the expected buffer address is empty */
-		reg = in_be32(&regs->tx_pong_tsr);
+		reg = __raw_readl(&regs->tx_pong_tsr);
 		if ((reg & XEL_TSR_XMIT_BUSY_MASK) == 0) {
 			debug("Send packet from tx_pong buffer\n");
 			/* Write the frame to the buffer */
 			xemaclite_alignedwrite(ptr, &regs->tx_pong, len);
-			out_be32(&regs->tx_pong_tplr, len &
+			__raw_writel(len &
 				 (XEL_TPLR_LENGTH_MASK_HI |
-				  XEL_TPLR_LENGTH_MASK_LO));
-			reg = in_be32(&regs->tx_pong_tsr);
+				  XEL_TPLR_LENGTH_MASK_LO),
+				  &regs->tx_pong_tplr);
+			reg = __raw_readl(&regs->tx_pong_tsr);
 			reg |= XEL_TSR_XMIT_BUSY_MASK;
-			out_be32(&regs->tx_pong_tsr, reg);
+			__raw_writel(reg, &regs->tx_pong_tsr);
 			return 0;
 		}
 	}
@@ -451,14 +457,14 @@ static int emaclite_recv(struct udevice *dev, int flags, uchar **packetp)
 {
 	u32 length, first_read, reg, attempt = 0;
 	void *addr, *ack;
-	struct xemaclite *emaclite = dev->priv;
+	struct xemaclite *emaclite = dev_get_priv(dev);
 	struct emaclite_regs *regs = emaclite->regs;
 	struct ethernet_hdr *eth;
 	struct ip_udp_hdr *ip;
 
 try_again:
 	if (!emaclite->use_rx_pong_buffer_next) {
-		reg = in_be32(&regs->rx_ping_rsr);
+		reg = __raw_readl(&regs->rx_ping_rsr);
 		debug("Testing data at rx_ping\n");
 		if ((reg & XEL_RSR_RECV_DONE_MASK) == XEL_RSR_RECV_DONE_MASK) {
 			debug("Data found in rx_ping buffer\n");
@@ -478,7 +484,7 @@ try_again:
 			goto try_again;
 		}
 	} else {
-		reg = in_be32(&regs->rx_pong_rsr);
+		reg = __raw_readl(&regs->rx_pong_rsr);
 		debug("Testing data at rx_pong\n");
 		if ((reg & XEL_RSR_RECV_DONE_MASK) == XEL_RSR_RECV_DONE_MASK) {
 			debug("Data found in rx_pong buffer\n");
@@ -511,6 +517,8 @@ try_again:
 		length = ntohs(ip->ip_len);
 		length += ETHER_HDR_SIZE + ETH_FCS_LEN;
 		debug("IP Packet %x\n", length);
+		if (length > PKTSIZE)
+			length = PKTSIZE;
 		break;
 	default:
 		debug("Other Packet\n");
@@ -519,15 +527,15 @@ try_again:
 	}
 
 	/* Read the rest of the packet which is longer then first read */
-	if (length != first_read)
+	if (length > first_read)
 		xemaclite_alignedread(addr + first_read,
 				      etherrxbuff + first_read,
 				      length - first_read);
 
 	/* Acknowledge the frame */
-	reg = in_be32(ack);
+	reg = __raw_readl(ack);
 	reg &= ~XEL_RSR_RECV_DONE_MASK;
-	out_be32(ack, reg);
+	__raw_writel(reg, ack);
 
 	debug("Packet receive from 0x%p, length %dB\n", addr, length);
 	*packetp = etherrxbuff;
@@ -557,15 +565,27 @@ static int emaclite_probe(struct udevice *dev)
 	struct xemaclite *emaclite = dev_get_priv(dev);
 	int ret;
 
-	emaclite->bus = mdio_alloc();
-	emaclite->bus->read = emaclite_miiphy_read;
-	emaclite->bus->write = emaclite_miiphy_write;
-	emaclite->bus->priv = emaclite;
-	strcpy(emaclite->bus->name, "emaclite");
+	if (IS_ENABLED(CONFIG_DM_ETH_PHY))
+		emaclite->bus = eth_phy_get_mdio_bus(dev);
 
-	ret = mdio_register(emaclite->bus);
-	if (ret)
-		return ret;
+	if (!emaclite->bus) {
+		emaclite->bus = mdio_alloc();
+		emaclite->bus->read = emaclite_miiphy_read;
+		emaclite->bus->write = emaclite_miiphy_write;
+		emaclite->bus->priv = emaclite;
+
+		ret = mdio_register_seq(emaclite->bus, dev_seq(dev));
+		if (ret)
+			return ret;
+	}
+
+	if (IS_ENABLED(CONFIG_DM_ETH_PHY)) {
+		eth_phy_set_mdio_bus(dev, emaclite->bus);
+		emaclite->phyaddr = eth_phy_get_addr(dev);
+	}
+
+	printf("EMACLITE: %lx, phyaddr %d, %d/%d\n", (ulong)emaclite->regs,
+	       emaclite->phyaddr, emaclite->txpp, emaclite->rxpp);
 
 	return 0;
 }
@@ -588,30 +608,30 @@ static const struct eth_ops emaclite_ops = {
 	.stop = emaclite_stop,
 };
 
-static int emaclite_ofdata_to_platdata(struct udevice *dev)
+static int emaclite_of_to_plat(struct udevice *dev)
 {
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 	struct xemaclite *emaclite = dev_get_priv(dev);
 	int offset = 0;
 
-	pdata->iobase = (phys_addr_t)dev_get_addr(dev);
-	emaclite->regs = (struct emaclite_regs *)pdata->iobase;
+	pdata->iobase = dev_read_addr(dev);
+	emaclite->regs = (struct emaclite_regs *)ioremap(pdata->iobase,
+							 0x10000);
 
 	emaclite->phyaddr = -1;
 
-	offset = fdtdec_lookup_phandle(gd->fdt_blob, dev->of_offset,
-				      "phy-handle");
-	if (offset > 0)
-		emaclite->phyaddr = fdtdec_get_int(gd->fdt_blob, offset,
-						   "reg", -1);
+	if (!(IS_ENABLED(CONFIG_DM_ETH_PHY))) {
+		offset = fdtdec_lookup_phandle(gd->fdt_blob, dev_of_offset(dev),
+					       "phy-handle");
+		if (offset > 0)
+			emaclite->phyaddr = fdtdec_get_int(gd->fdt_blob,
+							   offset, "reg", -1);
+	}
 
-	emaclite->txpp = fdtdec_get_int(gd->fdt_blob, dev->of_offset,
+	emaclite->txpp = fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev),
 					"xlnx,tx-ping-pong", 0);
-	emaclite->rxpp = fdtdec_get_int(gd->fdt_blob, dev->of_offset,
+	emaclite->rxpp = fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev),
 					"xlnx,rx-ping-pong", 0);
-
-	printf("EMACLITE: %lx, phyaddr %d, %d/%d\n", (ulong)emaclite->regs,
-	       emaclite->phyaddr, emaclite->txpp, emaclite->rxpp);
 
 	return 0;
 }
@@ -625,10 +645,10 @@ U_BOOT_DRIVER(emaclite) = {
 	.name   = "emaclite",
 	.id     = UCLASS_ETH,
 	.of_match = emaclite_ids,
-	.ofdata_to_platdata = emaclite_ofdata_to_platdata,
+	.of_to_plat = emaclite_of_to_plat,
 	.probe  = emaclite_probe,
 	.remove = emaclite_remove,
 	.ops    = &emaclite_ops,
-	.priv_auto_alloc_size = sizeof(struct xemaclite),
-	.platdata_auto_alloc_size = sizeof(struct eth_pdata),
+	.priv_auto	= sizeof(struct xemaclite),
+	.plat_auto	= sizeof(struct eth_pdata),
 };

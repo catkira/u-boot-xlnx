@@ -1,20 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2013
  * David Feng <fenghua@phytium.com.cn>
  *
  * (C) Copyright 2016
  * Alexander Graf <agraf@suse.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <cpu_func.h>
+#include <hang.h>
+#include <log.h>
+#include <asm/cache.h>
+#include <asm/global_data.h>
 #include <asm/system.h>
 #include <asm/armv8/mmu.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
-#ifndef CONFIG_SYS_DCACHE_OFF
+#if !CONFIG_IS_ENABLED(SYS_DCACHE_OFF)
 
 /*
  *  With 4k page granule, a virtual address is split into 4 lookup parts
@@ -35,8 +39,28 @@ DECLARE_GLOBAL_DATA_PTR;
  *    off:          FFF
  */
 
-static u64 get_tcr(int el, u64 *pips, u64 *pva_bits)
+static int get_effective_el(void)
 {
+	int el = current_el();
+
+	if (el == 2) {
+		u64 hcr_el2;
+
+		/*
+		 * If we are using the EL2&0 translation regime, the TCR_EL2
+		 * looks like the EL1 version, even though we are in EL2.
+		 */
+		__asm__ ("mrs %0, HCR_EL2\n" : "=r" (hcr_el2));
+		if (hcr_el2 & BIT(HCR_EL2_E2H_BIT))
+			return 1;
+	}
+
+	return el;
+}
+
+u64 get_tcr(u64 *pips, u64 *pva_bits)
+{
+	int el = get_effective_el();
 	u64 max_addr = 0;
 	u64 ips, va_bits;
 	u64 tcr;
@@ -44,7 +68,7 @@ static u64 get_tcr(int el, u64 *pips, u64 *pva_bits)
 
 	/* Find the largest address we need to support */
 	for (i = 0; mem_map[i].size || mem_map[i].attrs; i++)
-		max_addr = max(max_addr, mem_map[i].base + mem_map[i].size);
+		max_addr = max(max_addr, mem_map[i].virt + mem_map[i].size);
 
 	/* Calculate the maximum physical (and thus virtual) address */
 	if (max_addr > (1ULL << 44)) {
@@ -111,7 +135,7 @@ static u64 *find_pte(u64 addr, int level)
 
 	debug("addr=%llx level=%d\n", addr, level);
 
-	get_tcr(0, NULL, &va_bits);
+	get_tcr(NULL, &va_bits);
 	if (va_bits < 39)
 		start_level = 1;
 
@@ -167,49 +191,6 @@ static void set_pte_table(u64 *pte, u64 *table)
 	*pte = PTE_TYPE_TABLE | (ulong)table;
 }
 
-/* Add one mm_region map entry to the page tables */
-static void add_map(struct mm_region *map)
-{
-	u64 *pte;
-	u64 addr = map->base;
-	u64 size = map->size;
-	u64 attrs = map->attrs | PTE_TYPE_BLOCK | PTE_BLOCK_AF;
-	u64 blocksize;
-	int level;
-	u64 *new_table;
-
-	while (size) {
-		pte = find_pte(addr, 0);
-		if (pte && (pte_type(pte) == PTE_TYPE_FAULT)) {
-			debug("Creating table for addr 0x%llx\n", addr);
-			new_table = create_table();
-			set_pte_table(pte, new_table);
-		}
-
-		for (level = 1; level < 4; level++) {
-			pte = find_pte(addr, level);
-			blocksize = 1ULL << level2shift(level);
-			debug("Checking if pte fits for addr=%llx size=%llx "
-			      "blocksize=%llx\n", addr, size, blocksize);
-			if (size >= blocksize && !(addr & (blocksize - 1))) {
-				/* Page fits, create block PTE */
-				debug("Setting PTE %p to block addr=%llx\n",
-				      pte, addr);
-				*pte = addr | attrs;
-				addr += blocksize;
-				size -= blocksize;
-				break;
-			} else if ((pte_type(pte) == PTE_TYPE_FAULT)) {
-				/* Page doesn't fit, create subpages */
-				debug("Creating subtable for addr 0x%llx "
-				      "blksize=%llx\n", addr, blocksize);
-				new_table = create_table();
-				set_pte_table(pte, new_table);
-			}
-		}
-	}
-}
-
 /* Splits a block PTE into table with subpages spanning the old block */
 static void split_block(u64 *pte, int level)
 {
@@ -241,6 +222,61 @@ static void split_block(u64 *pte, int level)
 	set_pte_table(pte, new_table);
 }
 
+/* Add one mm_region map entry to the page tables */
+static void add_map(struct mm_region *map)
+{
+	u64 *pte;
+	u64 virt = map->virt;
+	u64 phys = map->phys;
+	u64 size = map->size;
+	u64 attrs = map->attrs | PTE_TYPE_BLOCK | PTE_BLOCK_AF;
+	u64 blocksize;
+	int level;
+	u64 *new_table;
+
+	while (size) {
+		pte = find_pte(virt, 0);
+		if (pte && (pte_type(pte) == PTE_TYPE_FAULT)) {
+			debug("Creating table for virt 0x%llx\n", virt);
+			new_table = create_table();
+			set_pte_table(pte, new_table);
+		}
+
+		for (level = 1; level < 4; level++) {
+			pte = find_pte(virt, level);
+			if (!pte)
+				panic("pte not found\n");
+
+			blocksize = 1ULL << level2shift(level);
+			debug("Checking if pte fits for virt=%llx size=%llx blocksize=%llx\n",
+			      virt, size, blocksize);
+			if (size >= blocksize && !(virt & (blocksize - 1))) {
+				/* Page fits, create block PTE */
+				debug("Setting PTE %p to block virt=%llx\n",
+				      pte, virt);
+				if (level == 3)
+					*pte = phys | attrs | PTE_TYPE_PAGE;
+				else
+					*pte = phys | attrs;
+				virt += blocksize;
+				phys += blocksize;
+				size -= blocksize;
+				break;
+			} else if (pte_type(pte) == PTE_TYPE_FAULT) {
+				/* Page doesn't fit, create subpages */
+				debug("Creating subtable for virt 0x%llx blksize=%llx\n",
+				      virt, blocksize);
+				new_table = create_table();
+				set_pte_table(pte, new_table);
+			} else if (pte_type(pte) == PTE_TYPE_BLOCK) {
+				debug("Split block into subtable for virt 0x%llx blksize=0x%llx\n",
+				      virt, blocksize);
+				split_block(pte, level);
+			}
+		}
+	}
+}
+
 enum pte_type {
 	PTE_INVAL,
 	PTE_BLOCK,
@@ -265,7 +301,7 @@ static int count_required_pts(u64 addr, int level, u64 maxaddr)
 
 	for (i = 0; mem_map[i].size || mem_map[i].attrs; i++) {
 		struct mm_region *map = &mem_map[i];
-		u64 start = map->base;
+		u64 start = map->virt;
 		u64 end = start + map->size;
 
 		/* Check if the PTE would overlap with the map */
@@ -327,7 +363,7 @@ __weak u64 get_page_table_size(void)
 	u64 va_bits;
 	int start_level = 0;
 
-	get_tcr(0, NULL, &va_bits);
+	get_tcr(NULL, &va_bits);
 	if (va_bits < 39)
 		start_level = 1;
 
@@ -349,9 +385,12 @@ __weak u64 get_page_table_size(void)
 	return size;
 }
 
-static void setup_pgtables(void)
+void setup_pgtables(void)
 {
 	int i;
+
+	if (!gd->arch.tlb_fillptr || !gd->arch.tlb_addr)
+		panic("Page table pointer not setup.");
 
 	/*
 	 * Allocate the first level we're on with invalidate entries.
@@ -363,14 +402,12 @@ static void setup_pgtables(void)
 	/* Now add all MMU table entries one after another to the table */
 	for (i = 0; mem_map[i].size || mem_map[i].attrs; i++)
 		add_map(&mem_map[i]);
-
-	/* Create the same thing once more for our emergency page table */
-	create_table();
 }
 
 static void setup_all_pgtables(void)
 {
 	u64 tlb_addr = gd->arch.tlb_addr;
+	u64 tlb_size = gd->arch.tlb_size;
 
 	/* Reset the fill ptr */
 	gd->arch.tlb_fillptr = tlb_addr;
@@ -379,10 +416,13 @@ static void setup_all_pgtables(void)
 	setup_pgtables();
 
 	/* Create emergency page tables */
+	gd->arch.tlb_size -= (uintptr_t)gd->arch.tlb_fillptr -
+			     (uintptr_t)gd->arch.tlb_addr;
 	gd->arch.tlb_addr = gd->arch.tlb_fillptr;
 	setup_pgtables();
 	gd->arch.tlb_emerg = gd->arch.tlb_addr;
 	gd->arch.tlb_addr = tlb_addr;
+	gd->arch.tlb_size = tlb_size;
 }
 
 /* to activate the MMU we need to set up virtual memory */
@@ -395,7 +435,7 @@ __weak void mmu_setup(void)
 		setup_all_pgtables();
 
 	el = current_el();
-	set_ttbr_tcr_mair(el, gd->arch.tlb_addr, get_tcr(el, NULL, NULL),
+	set_ttbr_tcr_mair(el, gd->arch.tlb_addr, get_tcr(NULL, NULL),
 			  MEMORY_ATTRIBUTES);
 
 	/* enable the mmu */
@@ -408,31 +448,33 @@ __weak void mmu_setup(void)
 void invalidate_dcache_all(void)
 {
 	__asm_invalidate_dcache_all();
+	__asm_invalidate_l3_dcache();
 }
 
 /*
  * Performs a clean & invalidation of the entire data cache at all levels.
  * This function needs to be inline to avoid using stack.
- * __asm_flush_l3_cache return status of timeout
+ * __asm_flush_l3_dcache return status of timeout
  */
 inline void flush_dcache_all(void)
 {
 	int ret;
 
 	__asm_flush_dcache_all();
-	ret = __asm_flush_l3_cache();
+	ret = __asm_flush_l3_dcache();
 	if (ret)
 		debug("flushing dcache returns 0x%x\n", ret);
 	else
 		debug("flushing dcache successfully.\n");
 }
 
+#ifndef CONFIG_SYS_DISABLE_DCACHE_OPS
 /*
  * Invalidates range in all levels of D-cache/unified cache
  */
 void invalidate_dcache_range(unsigned long start, unsigned long stop)
 {
-	__asm_flush_dcache_range(start, stop);
+	__asm_invalidate_dcache_range(start, stop);
 }
 
 /*
@@ -442,6 +484,15 @@ void flush_dcache_range(unsigned long start, unsigned long stop)
 {
 	__asm_flush_dcache_range(start, stop);
 }
+#else
+void invalidate_dcache_range(unsigned long start, unsigned long stop)
+{
+}
+
+void flush_dcache_range(unsigned long start, unsigned long stop)
+{
+}
+#endif /* CONFIG_SYS_DISABLE_DCACHE_OPS */
 
 void dcache_enable(void)
 {
@@ -451,6 +502,10 @@ void dcache_enable(void)
 		__asm_invalidate_tlb_all();
 		mmu_setup();
 	}
+
+	/* Set up page tables only once (it is done also by mmu_setup()) */
+	if (!gd->arch.tlb_fillptr)
+		setup_all_pgtables();
 
 	set_sctlr(get_sctlr() | CR_C);
 }
@@ -487,7 +542,8 @@ static bool is_aligned(u64 addr, u64 size, u64 align)
 	return !(addr & (align - 1)) && !(size & (align - 1));
 }
 
-static u64 set_one_region(u64 start, u64 size, u64 attrs, int level)
+/* Use flag to indicate if attrs has more than d-cache attributes */
+static u64 set_one_region(u64 start, u64 size, u64 attrs, bool flag, int level)
 {
 	int levelshift = level2shift(level);
 	u64 levelsize = 1ULL << levelshift;
@@ -495,8 +551,13 @@ static u64 set_one_region(u64 start, u64 size, u64 attrs, int level)
 
 	/* Can we can just modify the current level block PTE? */
 	if (is_aligned(start, size, levelsize)) {
-		*pte &= ~PMD_ATTRINDX_MASK;
-		*pte |= attrs;
+		if (flag) {
+			*pte &= ~PMD_ATTRMASK;
+			*pte |= attrs & PMD_ATTRMASK;
+		} else {
+			*pte &= ~PMD_ATTRINDX_MASK;
+			*pte |= attrs & PMD_ATTRINDX_MASK;
+		}
 		debug("Set attrs=%llx pte=%p level=%d\n", attrs, pte, level);
 
 		return levelsize;
@@ -521,11 +582,14 @@ static u64 set_one_region(u64 start, u64 size, u64 attrs, int level)
 void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 				     enum dcache_option option)
 {
-	u64 attrs = PMD_ATTRINDX(option);
+	u64 attrs = PMD_ATTRINDX(option >> 2);
 	u64 real_start = start;
 	u64 real_size = size;
 
 	debug("start=%lx size=%lx\n", (ulong)start, (ulong)size);
+
+	if (!gd->arch.tlb_emerg)
+		panic("Emergency page table not setup.");
 
 	/*
 	 * We can not modify page tables that we're currently running on,
@@ -543,7 +607,8 @@ void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 		u64 r;
 
 		for (level = 1; level < 4; level++) {
-			r = set_one_region(start, size, attrs, level);
+			/* Set d-cache attributes only */
+			r = set_one_region(start, size, attrs, false, level);
 			if (r) {
 				/* PTE successfully replaced */
 				size -= r;
@@ -564,7 +629,64 @@ void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 	flush_dcache_range(real_start, real_start + real_size);
 }
 
-#else	/* CONFIG_SYS_DCACHE_OFF */
+/*
+ * Modify MMU table for a region with updated PXN/UXN/Memory type/valid bits.
+ * The procecess is break-before-make. The target region will be marked as
+ * invalid during the process of changing.
+ */
+void mmu_change_region_attr(phys_addr_t addr, size_t siz, u64 attrs)
+{
+	int level;
+	u64 r, size, start;
+
+	start = addr;
+	size = siz;
+	/*
+	 * Loop through the address range until we find a page granule that fits
+	 * our alignment constraints, then set it to "invalid".
+	 */
+	while (size > 0) {
+		for (level = 1; level < 4; level++) {
+			/* Set PTE to fault */
+			r = set_one_region(start, size, PTE_TYPE_FAULT, true,
+					   level);
+			if (r) {
+				/* PTE successfully invalidated */
+				size -= r;
+				start += r;
+				break;
+			}
+		}
+	}
+
+	flush_dcache_range(gd->arch.tlb_addr,
+			   gd->arch.tlb_addr + gd->arch.tlb_size);
+	__asm_invalidate_tlb_all();
+
+	/*
+	 * Loop through the address range until we find a page granule that fits
+	 * our alignment constraints, then set it to the new cache attributes
+	 */
+	start = addr;
+	size = siz;
+	while (size > 0) {
+		for (level = 1; level < 4; level++) {
+			/* Set PTE to new attributes */
+			r = set_one_region(start, size, attrs, true, level);
+			if (r) {
+				/* PTE successfully updated */
+				size -= r;
+				start += r;
+				break;
+			}
+		}
+	}
+	flush_dcache_range(gd->arch.tlb_addr,
+			   gd->arch.tlb_addr + gd->arch.tlb_size);
+	__asm_invalidate_tlb_all();
+}
+
+#else	/* !CONFIG_IS_ENABLED(SYS_DCACHE_OFF) */
 
 /*
  * For SPL builds, we may want to not have dcache enabled. Any real U-Boot
@@ -601,13 +723,13 @@ void mmu_set_region_dcache_behaviour(phys_addr_t start, size_t size,
 {
 }
 
-#endif	/* CONFIG_SYS_DCACHE_OFF */
+#endif	/* !CONFIG_IS_ENABLED(SYS_DCACHE_OFF) */
 
-#ifndef CONFIG_SYS_ICACHE_OFF
+#if !CONFIG_IS_ENABLED(SYS_ICACHE_OFF)
 
 void icache_enable(void)
 {
-	__asm_invalidate_icache_all();
+	invalidate_icache_all();
 	set_sctlr(get_sctlr() | CR_I);
 }
 
@@ -621,12 +743,18 @@ int icache_status(void)
 	return (get_sctlr() & CR_I) != 0;
 }
 
+int mmu_status(void)
+{
+	return (get_sctlr() & CR_M) != 0;
+}
+
 void invalidate_icache_all(void)
 {
 	__asm_invalidate_icache_all();
+	__asm_invalidate_l3_icache();
 }
 
-#else	/* CONFIG_SYS_ICACHE_OFF */
+#else	/* !CONFIG_IS_ENABLED(SYS_ICACHE_OFF) */
 
 void icache_enable(void)
 {
@@ -641,11 +769,16 @@ int icache_status(void)
 	return 0;
 }
 
+int mmu_status(void)
+{
+	return 0;
+}
+
 void invalidate_icache_all(void)
 {
 }
 
-#endif	/* CONFIG_SYS_ICACHE_OFF */
+#endif	/* !CONFIG_IS_ENABLED(SYS_ICACHE_OFF) */
 
 /*
  * Enable dCache & iCache, whether cache is actually enabled

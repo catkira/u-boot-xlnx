@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2002
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
@@ -5,8 +6,6 @@
  * (C) Copyright 2010
  * Michael Zaidman, Kodak, michael.zaidman@kodak.com
  * post_word_{load|store} cleanup.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef _POST_H
 #define _POST_H
@@ -15,45 +14,21 @@
 #include <common.h>
 #include <asm/io.h>
 
-#if defined(CONFIG_POST) || defined(CONFIG_LOGBUFFER)
+#if defined(CONFIG_POST)
 
 #ifndef CONFIG_POST_EXTERNAL_WORD_FUNCS
 #ifdef CONFIG_SYS_POST_WORD_ADDR
 #define _POST_WORD_ADDR	CONFIG_SYS_POST_WORD_ADDR
 #else
 
-#ifdef CONFIG_MPC5xxx
-#define _POST_WORD_ADDR	(MPC5XXX_SRAM + MPC5XXX_SRAM_POST_SIZE)
-
-#elif defined(CONFIG_MPC512X)
-#define _POST_WORD_ADDR \
-	(CONFIG_SYS_SRAM_BASE + CONFIG_SYS_GBL_DATA_OFFSET - 0x4)
-
-#elif defined(CONFIG_8xx)
-#define _POST_WORD_ADDR \
-	(((immap_t *)CONFIG_SYS_IMMR)->im_cpm.cp_dpmem + CPM_POST_WORD_ADDR)
-
-#elif defined(CONFIG_MPC8260)
-#include <asm/cpm_8260.h>
-#define _POST_WORD_ADDR	(CONFIG_SYS_IMMR + CPM_POST_WORD_ADDR)
-
-#elif defined(CONFIG_MPC8360)
+#if defined(CONFIG_ARCH_MPC8360)
 #include <linux/immap_qe.h>
 #define _POST_WORD_ADDR	(CONFIG_SYS_IMMR + CPM_POST_WORD_ADDR)
 
 #elif defined (CONFIG_MPC85xx)
 #include <asm/immap_85xx.h>
-#define _POST_WORD_ADDR	(CONFIG_SYS_IMMR + CONFIG_SYS_MPC85xx_PIC_OFFSET + \
+#define _POST_WORD_ADDR	(CONFIG_SYS_IMMR + CFG_SYS_MPC85xx_PIC_OFFSET + \
 				offsetof(ccsr_pic_t, tfrr))
-
-#elif defined (CONFIG_MPC86xx)
-#include <asm/immap_86xx.h>
-#define _POST_WORD_ADDR	(CONFIG_SYS_IMMR + CONFIG_SYS_MPC86xx_PIC_OFFSET + \
-				offsetof(ccsr_pic_t, tfrr))
-
-#elif defined (CONFIG_4xx)
-#define _POST_WORD_ADDR \
-	(CONFIG_SYS_OCM_DATA_ADDR + CONFIG_SYS_GBL_DATA_OFFSET - 0x4)
 #endif
 
 #ifndef _POST_WORD_ADDR
@@ -77,7 +52,7 @@ extern ulong post_word_load(void);
 extern void post_word_store(ulong value);
 
 #endif /* CONFIG_POST_EXTERNAL_WORD_FUNCS */
-#endif /* defined (CONFIG_POST) || defined(CONFIG_LOGBUFFER) */
+#endif /* defined (CONFIG_POST) */
 #endif /* __ASSEMBLY__ */
 
 #ifdef CONFIG_POST
@@ -127,7 +102,6 @@ int post_init_f (void);
 void post_bootmode_init (void);
 int post_bootmode_get (unsigned int * last_test);
 void post_bootmode_clear (void);
-void post_output_backlog ( void );
 int post_run (char *name, int flags);
 int post_info (char *name);
 int post_log (char *format, ...);
@@ -135,6 +109,16 @@ int post_log (char *format, ...);
 void post_reloc (void);
 #endif
 unsigned long post_time_ms (unsigned long base);
+
+/**
+ * post_output_backlog() - Print POST results
+ *
+ * Print POST results during the generic board init sequence, after
+ * relocation.
+ *
+ * Return: 0 if OK
+ */
+int post_output_backlog(void);
 
 extern struct post_test post_list[];
 extern unsigned int post_list_size;
@@ -164,7 +148,6 @@ extern int memory_post_test(int flags);
 #define CONFIG_SYS_POST_CACHE		0x00000020
 #define CONFIG_SYS_POST_UART		0x00000040
 #define CONFIG_SYS_POST_ETHER		0x00000080
-#define CONFIG_SYS_POST_SPI		0x00000100
 #define CONFIG_SYS_POST_USB		0x00000200
 #define CONFIG_SYS_POST_SPR		0x00000400
 #define CONFIG_SYS_POST_SYSMON		0x00000800

@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2007-2009 coresystems GmbH
  * Copyright (C) 2013 Google Inc.
  * Copyright (C) 2016 Bin Meng <bmeng.cn@gmail.com>
  *
  * Modified from coreboot src/soc/intel/baytrail/acpi/lpc.asl
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /* Intel LPC Bus Device - 0:1f.0 */
@@ -119,17 +118,14 @@ Device (LPCB)
 
 		Method(_STA, 0, Serialized)
 		{
-			/*
-			 * TODO:
-			 *
-			 * Need to hide the internal UART depending on whether
-			 * internal UART is enabled or not so that external
-			 * SuperIO UART can be exposed to system.
-			 */
-			Store(1, UI3E)
-			Store(1, UI4E)
-			Store(1, C1EN)
-			Return (STA_VISIBLE)
+			If (LEqual(IURE, 1)) {
+				Store(1, UI3E)
+				Store(1, UI4E)
+				Store(1, C1EN)
+				Return (STA_VISIBLE)
+			} Else {
+				Return (STA_MISSING)
+			}
 
 		}
 
@@ -140,20 +136,20 @@ Device (LPCB)
 			Store(0, C1EN)
 		}
 
+		Name(BUF0, ResourceTemplate()
+		{
+			IO(Decode16, 0x03f8, 0x03f8, 0x01, 0x08)
+			IRQNoFlags() { 3 }
+		})
+
+		Name(BUF1, ResourceTemplate()
+		{
+			IO(Decode16, 0x03f8, 0x03f8, 0x01, 0x08)
+			IRQNoFlags() { 4 }
+		})
+
 		Method(_CRS, 0, Serialized)
 		{
-			Name(BUF0, ResourceTemplate()
-			{
-				IO(Decode16, 0x03f8, 0x03f8, 0x01, 0x08)
-				IRQNoFlags() { 3 }
-			})
-
-			Name(BUF1, ResourceTemplate()
-			{
-				IO(Decode16, 0x03f8, 0x03f8, 0x01, 0x08)
-				IRQNoFlags() { 4 }
-			})
-
 			If (LLessEqual(SRID, 0x04)) {
 				Return (BUF0)
 			} Else {

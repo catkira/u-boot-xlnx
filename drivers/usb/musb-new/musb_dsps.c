@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Texas Instruments DSPS platforms "glue layer"
  *
@@ -7,8 +8,6 @@
  *
  * This file is part of the Inventra Controller Driver for Linux.
  *
- * SPDX-License-Identifier:	GPL-2.0
- *
  * musb_dsps.c will be a common file for all the TI DSPS platforms
  * such as dm64x, dm36x, dm35x, da8x, am35x and ti81x.
  * For now only ti81x is using this and in future davinci.c, am35x.c
@@ -16,6 +15,8 @@
  */
 
 #ifndef __UBOOT__
+#include <dm/device_compat.h>
+#include <dm/devres.h>
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/err.h>
@@ -31,6 +32,8 @@
 #include <plat/usb.h>
 #else
 #include <common.h>
+#include <dm.h>
+#include <dm/device_compat.h>
 #include <asm/omap_musb.h>
 #include "linux-compat.h"
 #endif
@@ -337,7 +340,7 @@ static irqreturn_t dsps_interrupt(int irq, void *hci)
 	 * Also, DRVVBUS pulses for SRP (but not at 5V) ...
 	 */
 	if ((usbintr & MUSB_INTR_BABBLE) && is_host_enabled(musb))
-		pr_info("CAUTION: musb: Babble Interrupt Occured\n");
+		pr_info("CAUTION: musb: Babble Interrupt Occurred\n");
 
 	if (usbintr & ((1 << wrp->drvvbus) << wrp->usb_shift)) {
 		int drvvbus = dsps_readl(reg_base, wrp->status);
@@ -451,8 +454,8 @@ static int dsps_musb_init(struct musb *musb)
 	dsps_writel(reg_base, wrp->control, (1 << wrp->reset));
 
 	/* Start the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(1);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 1);
 
 	musb->isr = dsps_interrupt;
 
@@ -492,8 +495,8 @@ static int dsps_musb_exit(struct musb *musb)
 #endif
 
 	/* Shutdown the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(0);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 0);
 
 #ifndef __UBOOT__
 	/* NOP driver needs change if supporting dual instance */
@@ -627,7 +630,7 @@ static int __devinit dsps_probe(struct platform_device *pdev)
 	/* get memory resource */
 	iomem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!iomem) {
-		dev_err(&pdev->dev, "failed to get usbss mem resourse\n");
+		dev_err(&pdev->dev, "failed to get usbss mem resource\n");
 		ret = -ENODEV;
 		goto err1;
 	}
@@ -692,8 +695,8 @@ static int dsps_suspend(struct device *dev)
 	struct omap_musb_board_data *data = plat->board_data;
 
 	/* Shutdown the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(0);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 0);
 
 	return 0;
 }
@@ -704,8 +707,8 @@ static int dsps_resume(struct device *dev)
 	struct omap_musb_board_data *data = plat->board_data;
 
 	/* Start the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(1);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 1);
 
 	return 0;
 }

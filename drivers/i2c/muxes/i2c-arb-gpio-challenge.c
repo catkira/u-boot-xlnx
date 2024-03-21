@@ -1,15 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2015 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
 #include <i2c.h>
+#include <log.h>
+#include <malloc.h>
+#include <asm/global_data.h>
 #include <asm/gpio.h>
+#include <linux/delay.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -89,7 +92,7 @@ static int i2c_arbitrator_probe(struct udevice *dev)
 {
 	struct i2c_arbitrator_priv *priv = dev_get_priv(dev);
 	const void *blob = gd->fdt_blob;
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 	int ret;
 
 	debug("%s: %s\n", __func__, dev->name);
@@ -143,5 +146,5 @@ U_BOOT_DRIVER(i2c_arbitrator) = {
 	.probe = i2c_arbitrator_probe,
 	.remove = i2c_arbitrator_remove,
 	.ops = &i2c_arbitrator_ops,
-	.priv_auto_alloc_size = sizeof(struct i2c_arbitrator_priv),
+	.priv_auto	= sizeof(struct i2c_arbitrator_priv),
 };

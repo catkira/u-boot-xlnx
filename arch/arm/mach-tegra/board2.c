@@ -1,52 +1,49 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  (C) Copyright 2010,2011
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
+#include <env.h>
 #include <errno.h>
+#include <init.h>
+#include <log.h>
 #include <ns16550.h>
-#include <linux/compiler.h>
-#include <linux/sizes.h>
+#include <usb.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
-#include <asm/arch/clock.h>
-#include <asm/arch/funcmux.h>
-#include <asm/arch/pinmux.h>
-#include <asm/arch/pmu.h>
-#include <asm/arch/tegra.h>
 #include <asm/arch-tegra/ap.h>
 #include <asm/arch-tegra/board.h>
+#include <asm/arch-tegra/cboot.h>
 #include <asm/arch-tegra/clk_rst.h>
 #include <asm/arch-tegra/pmc.h>
+#include <asm/arch-tegra/pmu.h>
 #include <asm/arch-tegra/sys_proto.h>
 #include <asm/arch-tegra/uart.h>
 #include <asm/arch-tegra/warmboot.h>
 #include <asm/arch-tegra/gpu.h>
+#include <asm/arch-tegra/usb.h>
+#include <asm/arch-tegra/xusb-padctl.h>
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
+#include <asm/arch/clock.h>
+#endif
+#if IS_ENABLED(CONFIG_TEGRA_PINCTRL)
+#include <asm/arch/funcmux.h>
+#include <asm/arch/pinmux.h>
+#endif
+#include <asm/arch/tegra.h>
 #ifdef CONFIG_TEGRA_CLOCK_SCALING
 #include <asm/arch/emc.h>
 #endif
-#include <asm/arch-tegra/usb.h>
-#ifdef CONFIG_USB_EHCI_TEGRA
-#include <usb.h>
-#endif
-#ifdef CONFIG_TEGRA_MMC
-#include <asm/arch-tegra/tegra_mmc.h>
-#include <asm/arch-tegra/mmc.h>
-#endif
-#include <asm/arch-tegra/xusb-padctl.h>
-#include <power/as3722.h>
-#include <i2c.h>
-#include <spi.h>
 #include "emc.h"
 
 DECLARE_GLOBAL_DATA_PTR;
 
 #ifdef CONFIG_SPL_BUILD
 /* TODO(sjg@chromium.org): Remove once SPL supports device tree */
-U_BOOT_DEVICE(tegra_gpios) = {
+U_BOOT_DRVINFO(tegra_gpios) = {
 	"gpio_tegra"
 };
 #endif
@@ -54,9 +51,11 @@ U_BOOT_DEVICE(tegra_gpios) = {
 __weak void pinmux_init(void) {}
 __weak void pin_mux_usb(void) {}
 __weak void pin_mux_spi(void) {}
+__weak void pin_mux_mmc(void) {}
 __weak void gpio_early_init_uart(void) {}
 __weak void pin_mux_display(void) {}
 __weak void start_cpu_fan(void) {}
+__weak void cboot_late_init(void) {}
 
 #if defined(CONFIG_TEGRA_NAND)
 __weak void pin_mux_nand(void)
@@ -119,8 +118,10 @@ int board_init(void)
 	__maybe_unused int board_id;
 
 	/* Do clocks and UART first so that printf() works */
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
 	clock_init();
 	clock_verify();
+#endif
 
 	tegra_gpu_config();
 
@@ -128,8 +129,12 @@ int board_init(void)
 	pin_mux_spi();
 #endif
 
+#ifdef CONFIG_MMC_SDHCI_TEGRA
+	pin_mux_mmc();
+#endif
+
 	/* Init is handled automatically in the driver-model case */
-#if defined(CONFIG_DM_VIDEO)
+#if defined(CONFIG_VIDEO)
 	pin_mux_display();
 #endif
 	/* boot param addr */
@@ -147,29 +152,26 @@ int board_init(void)
 		debug("Memory controller init failed: %d\n", err);
 #  endif
 # endif /* CONFIG_TEGRA_PMU */
-#ifdef CONFIG_AS3722_POWER
-	err = as3722_init(NULL);
-	if (err && err != -ENODEV)
-		return err;
-#endif
 #endif /* CONFIG_SYS_I2C_TEGRA */
 
 #ifdef CONFIG_USB_EHCI_TEGRA
 	pin_mux_usb();
 #endif
 
-#if defined(CONFIG_DM_VIDEO)
+#if defined(CONFIG_VIDEO)
 	board_id = tegra_board_id();
 	err = tegra_lcd_pmic_init(board_id);
-	if (err)
+	if (err) {
+		debug("Failed to set up LCD PMIC\n");
 		return err;
+	}
 #endif
 
 #ifdef CONFIG_TEGRA_NAND
 	pin_mux_nand();
 #endif
 
-	tegra_xusb_padctl_init(gd->fdt_blob);
+	tegra_xusb_padctl_init();
 
 #ifdef CONFIG_TEGRA_LP0
 	/* save Sdram params to PMC 2, 4, and 24 for WB0 */
@@ -181,6 +183,12 @@ int board_init(void)
 	return nvidia_board_init();
 }
 
+void board_cleanup_before_linux(void)
+{
+	/* power down UPHY PLL */
+	tegra_xusb_padctl_exit();
+}
+
 #ifdef CONFIG_BOARD_EARLY_INIT_F
 static void __gpio_early_init(void)
 {
@@ -190,6 +198,11 @@ void gpio_early_init(void) __attribute__((weak, alias("__gpio_early_init")));
 
 int board_early_init_f(void)
 {
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
+	if (!clock_early_init_done())
+		clock_early_init();
+#endif
+
 #if defined(CONFIG_TEGRA_DISCONNECT_UDC_ON_BOOT)
 #define USBCMD_FS2 (1 << 15)
 	{
@@ -199,10 +212,37 @@ int board_early_init_f(void)
 #endif
 
 	/* Do any special system timer/TSC setup */
-#if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
+#if IS_ENABLED(CONFIG_TEGRA_CLKRST)
+#  if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
 	if (!tegra_cpu_is_non_secure())
-#endif
+#  endif
 		arch_timer_init();
+#endif
+
+#if defined(CONFIG_DISABLE_SDMMC1_EARLY)
+	/*
+	 * Turn off (reset/disable) SDMMC1 on Nano here, before GPIO INIT.
+	 * We do this because earlier bootloaders have enabled power to
+	 * SDMMC1 on Nano, and toggling power-gpio (PZ3) in pinmux_init()
+	 * results in power being back-driven into the SD-card and SDMMC1
+	 * HW, which is 'bad' as per the HW team.
+	 *
+	 * From the HW team: "LDO2 from the PMIC has already been set to 3.3v in
+	 * nvtboot/CBoot on Nano (for SD-card boot). So when U-Boot's GPIO_INIT
+	 * table sets PZ3 to OUT0 as per the pinmux spreadsheet, it turns off
+	 * the loadswitch. When PZ3 is 0 and not driving, essentially the SDCard
+	 * voltage turns off. Since the SDCard voltage is no longer there, the
+	 * SDMMC CLK/DAT lines are backdriving into what essentially is a
+	 * powered-off SDCard, that's why the voltage drops from 3.3V to ~1.6V"
+	 *
+	 * Note that this can probably be removed when we change over to storing
+	 * all BL components on QSPI on Nano, and U-Boot then becomes the first
+	 * one to turn on SDMMC1 power. Another fix would be to have CBoot
+	 * disable power/gate SDMMC1 off before handing off to U-Boot/kernel.
+	 */
+	reset_set_enable(PERIPH_ID_SDMMC1, 1);
+	clock_set_enable(PERIPH_ID_SDMMC1, 0);
+#endif	/* CONFIG_DISABLE_SDMMC1_EARLY */
 
 	pinmux_init();
 	board_init_uart_f();
@@ -220,63 +260,16 @@ int board_late_init(void)
 #if defined(CONFIG_TEGRA_SUPPORT_NON_SECURE)
 	if (tegra_cpu_is_non_secure()) {
 		printf("CPU is in NS mode\n");
-		setenv("cpu_ns_mode", "1");
+		env_set("cpu_ns_mode", "1");
 	} else {
-		setenv("cpu_ns_mode", "");
+		env_set("cpu_ns_mode", "");
 	}
 #endif
 	start_cpu_fan();
+	cboot_late_init();
 
 	return 0;
 }
-
-#if defined(CONFIG_TEGRA_MMC)
-__weak void pin_mux_mmc(void)
-{
-}
-
-/* this is a weak define that we are overriding */
-int board_mmc_init(bd_t *bd)
-{
-	debug("%s called\n", __func__);
-
-	/* Enable muxes, etc. for SDMMC controllers */
-	pin_mux_mmc();
-
-	debug("%s: init MMC\n", __func__);
-	tegra_mmc_init();
-
-	return 0;
-}
-
-void pad_init_mmc(struct mmc_host *host)
-{
-#if defined(CONFIG_TEGRA30)
-	enum periph_id id = host->mmc_id;
-	u32 val;
-
-	debug("%s: sdmmc address = %08x, id = %d\n", __func__,
-		(unsigned int)host->reg, id);
-
-	/* Set the pad drive strength for SDMMC1 or 3 only */
-	if (id != PERIPH_ID_SDMMC1 && id != PERIPH_ID_SDMMC3) {
-		debug("%s: settings are only valid for SDMMC1/SDMMC3!\n",
-			__func__);
-		return;
-	}
-
-	val = readl(&host->reg->sdmemcmppadctl);
-	val &= 0xFFFFFFF0;
-	val |= MEMCOMP_PADCTRL_VREF;
-	writel(val, &host->reg->sdmemcmppadctl);
-
-	val = readl(&host->reg->autocalcfg);
-	val &= 0xFFFF0000;
-	val |= AUTO_CAL_PU_OFFSET | AUTO_CAL_PD_OFFSET | AUTO_CAL_ENABLED;
-	writel(val, &host->reg->autocalcfg);
-#endif	/* T30 */
-}
-#endif	/* MMC */
 
 /*
  * In some SW environments, a memory carve-out exists to house a secure
@@ -304,6 +297,10 @@ static ulong carveout_size(void)
 {
 #ifdef CONFIG_ARM64
 	return SZ_512M;
+#elif defined(CONFIG_ARMV7_SECURE_RESERVE_SIZE)
+	// BASE+SIZE might not == 4GB. If so, we want the carveout to cover
+	// from BASE to 4GB, not BASE to BASE+SIZE.
+	return (0 - CONFIG_ARMV7_SECURE_BASE) & ~(SZ_2M - 1);
 #else
 	return 0;
 #endif
@@ -362,8 +359,17 @@ static ulong usable_ram_size_below_4g(void)
  * start address of that bank cannot be represented in the 32-bit .size
  * field.
  */
-void dram_init_banksize(void)
+int dram_init_banksize(void)
 {
+	int err;
+
+	/* try to compute DRAM bank size based on cboot DTB first */
+	err = cboot_dram_init_banksize();
+	if (err == 0)
+		return err;
+
+	/* fall back to default DRAM bank size computation */
+
 	gd->bd->bi_dram[0].start = CONFIG_SYS_SDRAM_BASE;
 	gd->bd->bi_dram[0].size = usable_ram_size_below_4g();
 
@@ -381,6 +387,8 @@ void dram_init_banksize(void)
 		gd->bd->bi_dram[1].start = 0;
 		gd->bd->bi_dram[1].size = 0;
 	}
+
+	return 0;
 }
 
 /*
@@ -393,33 +401,16 @@ void dram_init_banksize(void)
  * This function is called before dram_init_banksize(), so we can't simply
  * return gd->bd->bi_dram[1].start + gd->bd->bi_dram[1].size.
  */
-ulong board_get_usable_ram_top(ulong total_size)
+phys_size_t board_get_usable_ram_top(phys_size_t total_size)
 {
+	ulong ram_top;
+
+	/* try to get top of usable RAM based on cboot DTB first */
+	ram_top = cboot_get_usable_ram_top(total_size);
+	if (ram_top > 0)
+		return ram_top;
+
+	/* fall back to default usable RAM computation */
+
 	return CONFIG_SYS_SDRAM_BASE + usable_ram_size_below_4g();
-}
-
-/*
- * This function is called right before the kernel is booted. "blob" is the
- * device tree that will be passed to the kernel.
- */
-int ft_system_setup(void *blob, bd_t *bd)
-{
-	const char *gpu_compats[] = {
-#if defined(CONFIG_TEGRA124)
-		"nvidia,gk20a",
-#endif
-#if defined(CONFIG_TEGRA210)
-		"nvidia,gm20b",
-#endif
-	};
-	int i, ret;
-
-	/* Enable GPU node if GPU setup has been performed */
-	for (i = 0; i < ARRAY_SIZE(gpu_compats); i++) {
-		ret = tegra_gpu_enable_node(blob, gpu_compats[i]);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
 }

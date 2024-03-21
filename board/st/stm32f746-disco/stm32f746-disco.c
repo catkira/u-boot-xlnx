@@ -1,99 +1,143 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2016
- * Vikas Manocha, <vikas.manocha@st.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2016, STMicroelectronics - All Rights Reserved
+ * Author(s): Vikas Manocha, <vikas.manocha@st.com> for STMicroelectronics.
  */
 
 #include <common.h>
+#include <dm.h>
+#include <init.h>
+#include <log.h>
+#include <miiphy.h>
+#include <phy_interface.h>
+#include <ram.h>
+#include <serial.h>
+#include <spl.h>
+#include <splash.h>
+#include <st_logo_data.h>
+#include <video.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/armv7m.h>
 #include <asm/arch/stm32.h>
-#include <asm/arch/gpio.h>
-#include <dm/platdata.h>
-#include <dm/platform_data/serial_stm32x7.h>
-#include <asm/arch/stm32_periph.h>
-#include <asm/arch/stm32_defs.h>
+#include <asm/arch/syscfg.h>
+#include <asm/gpio.h>
+#include <linux/delay.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
-const struct stm32_gpio_ctl gpio_ctl_gpout = {
-	.mode = STM32_GPIO_MODE_OUT,
-	.otype = STM32_GPIO_OTYPE_PP,
-	.speed = STM32_GPIO_SPEED_50M,
-	.pupd = STM32_GPIO_PUPD_NO,
-	.af = STM32_GPIO_AF0
-};
-
-const struct stm32_gpio_ctl gpio_ctl_usart = {
-	.mode = STM32_GPIO_MODE_AF,
-	.otype = STM32_GPIO_OTYPE_PP,
-	.speed = STM32_GPIO_SPEED_50M,
-	.pupd = STM32_GPIO_PUPD_UP,
-	.af = STM32_GPIO_AF7
-};
-
-static const struct stm32_gpio_dsc usart_gpio[] = {
-	{STM32_GPIO_PORT_A, STM32_GPIO_PIN_9},	/* TX */
-	{STM32_GPIO_PORT_B, STM32_GPIO_PIN_7},	/* RX */
-};
-
-int uart_setup_gpio(void)
+int dram_init(void)
 {
-	int i;
-	int rv = 0;
-
-	clock_setup(GPIO_A_CLOCK_CFG);
-	clock_setup(GPIO_B_CLOCK_CFG);
-	for (i = 0; i < ARRAY_SIZE(usart_gpio); i++) {
-		rv = stm32_gpio_config(&usart_gpio[i], &gpio_ctl_usart);
-		if (rv)
-			goto out;
+#ifndef CONFIG_SPL_BUILD
+	int rv;
+	struct udevice *dev;
+	rv = uclass_get_device(UCLASS_RAM, 0, &dev);
+	if (rv) {
+		debug("DRAM init failed: %d\n", rv);
+		return rv;
 	}
 
-out:
+#endif
+	return fdtdec_setup_mem_size_base();
+}
+
+int dram_init_banksize(void)
+{
+	return fdtdec_setup_memory_banksize();
+}
+
+#ifdef CONFIG_SPL_BUILD
+#ifdef CONFIG_SPL_OS_BOOT
+int spl_start_uboot(void)
+{
+	debug("SPL: booting kernel\n");
+	/* break into full u-boot on 'c' */
+	return serial_tstc() && serial_getc() == 'c';
+}
+#endif
+
+int spl_dram_init(void)
+{
+	struct udevice *dev;
+	int rv;
+	rv = uclass_get_device(UCLASS_RAM, 0, &dev);
+	if (rv)
+		debug("DRAM init failed: %d\n", rv);
 	return rv;
 }
-
-static const struct stm32x7_serial_platdata serial_platdata = {
-	.base = (struct stm32_usart *)USART1_BASE,
-	.clock = CONFIG_SYS_CLK_FREQ,
-};
-
-U_BOOT_DEVICE(stm32x7_serials) = {
-	.name = "serial_stm32x7",
-	.platdata = &serial_platdata,
-};
-
-u32 get_board_rev(void)
+void spl_board_init(void)
 {
-	return 0;
+	preloader_console_init();
+	spl_dram_init();
+	arch_cpu_init(); /* to configure mpu for sdram rw permissions */
 }
-
-int board_early_init_f(void)
+u32 spl_boot_device(void)
 {
-	int res;
+	return BOOT_DEVICE_XIP;
+}
+#endif
 
-	res = uart_setup_gpio();
-	clock_setup(USART1_CLOCK_CFG);
-	if (res)
-		return res;
+int board_late_init(void)
+{
+	struct gpio_desc gpio = {};
+	int node;
+
+	node = fdt_node_offset_by_compatible(gd->fdt_blob, 0, "st,led1");
+	if (node < 0)
+		return -1;
+
+	gpio_request_by_name_nodev(offset_to_ofnode(node), "led-gpio", 0, &gpio,
+				   GPIOD_IS_OUT);
+
+	if (dm_gpio_is_valid(&gpio)) {
+		dm_gpio_set_value(&gpio, 0);
+		mdelay(10);
+		dm_gpio_set_value(&gpio, 1);
+	}
+
+	/* read button 1*/
+	node = fdt_node_offset_by_compatible(gd->fdt_blob, 0, "st,button1");
+	if (node < 0)
+		return -1;
+
+	gpio_request_by_name_nodev(offset_to_ofnode(node), "button-gpio", 0,
+				   &gpio, GPIOD_IS_IN);
+
+	if (dm_gpio_is_valid(&gpio)) {
+		if (dm_gpio_get_value(&gpio))
+			puts("usr button is at HIGH LEVEL\n");
+		else
+			puts("usr button is at LOW LEVEL\n");
+	}
 
 	return 0;
 }
 
 int board_init(void)
 {
-	gd->bd->bi_boot_params = CONFIG_SYS_SDRAM_BASE + 0x100;
+#ifdef CONFIG_ETH_DESIGNWARE
+	ofnode node;
 
-	return 0;
-}
+	node = ofnode_by_compatible(ofnode_null(), "st,stm32-dwmac");
+	if (!ofnode_valid(node))
+		return -1;
 
-int dram_init(void)
-{
-	gd->bd->bi_dram[0].start = CONFIG_SYS_RAM_BASE;
-	gd->bd->bi_dram[0].size  = CONFIG_SYS_RAM_SIZE;
+	switch (ofnode_read_phy_mode(node)) {
+	case PHY_INTERFACE_MODE_RMII:
+		STM32_SYSCFG->pmc |= SYSCFG_PMC_MII_RMII_SEL;
+		break;
+	case PHY_INTERFACE_MODE_MII:
+		STM32_SYSCFG->pmc &= ~SYSCFG_PMC_MII_RMII_SEL;
+		break;
+	default:
+		printf("Unsupported PHY interface!\n");
+	}
+#endif
 
-	gd->ram_size = CONFIG_SYS_RAM_SIZE;
+#if defined(CONFIG_CMD_BMP)
+	bmp_display((ulong)stmicroelectronics_uboot_logo_8bit_rle,
+		    BMP_ALIGN_CENTER, BMP_ALIGN_CENTER);
+#endif /* CONFIG_CMD_BMP */
+
 	return 0;
 }

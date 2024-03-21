@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Texas Instruments Incorporated - http://www.ti.com/
  *
@@ -5,22 +6,23 @@
  *
  * Copyright (C) 2009 Nick Thompson, GE Fanuc, Ltd. <nick.thompson@gefanuc.com>
  * Copyright (C) 2007 Sergey Kubushyn <ksi@koi8.net>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <env.h>
 #include <i2c.h>
+#include <init.h>
 #include <net.h>
-#include <netdev.h>
-#include <spi.h>
-#include <spi_flash.h>
 #include <asm/arch/hardware.h>
+#include <asm/global_data.h>
 #include <asm/ti-common/davinci_nand.h>
 #include <asm/io.h>
-#include <asm/errno.h>
+#include <ns16550.h>
+#include <dm/platdata.h>
+#include <linux/errno.h>
+#include <asm/mach-types.h>
 #include <asm/arch/davinci_misc.h>
-#ifdef CONFIG_DAVINCI_MMC
+#ifdef CONFIG_MMC_DAVINCI
 #include <mmc.h>
 #include <asm/arch/sdmmc_defs.h>
 #endif
@@ -29,7 +31,7 @@ DECLARE_GLOBAL_DATA_PTR;
 
 #define pinmux(x)	(&davinci_syscfg_regs->pinmux[x])
 
-#ifdef CONFIG_DAVINCI_MMC
+#ifdef CONFIG_MMC_DAVINCI
 /* MMC0 pin muxer settings */
 const struct pinmux_config mmc0_pins[] = {
 	/* GP0[11] is required for SD to work on Rev 3 EVMs */
@@ -130,7 +132,7 @@ const struct lpsc_resource lpsc[] = {
 	{ DAVINCI_LPSC_EMAC },	/* image download */
 	{ DAVINCI_LPSC_UART2 },	/* console */
 	{ DAVINCI_LPSC_GPIO },
-#ifdef CONFIG_DAVINCI_MMC
+#ifdef CONFIG_MMC_DAVINCI
 	{ DAVINCI_LPSC_MMC_SD },
 #endif
 };
@@ -140,20 +142,6 @@ const int lpsc_size = ARRAY_SIZE(lpsc);
 #ifndef CONFIG_DA850_EVM_MAX_CPU_CLK
 #define CONFIG_DA850_EVM_MAX_CPU_CLK	456000000
 #endif
-
-/*
- * get_board_rev() - setup to pass kernel board revision information
- * Returns:
- * bit[0-3]	Maximum cpu clock rate supported by onboard SoC
- *		0000b - 300 MHz
- *		0001b - 372 MHz
- *		0010b - 408 MHz
- *		0011b - 456 MHz
- */
-u32 get_board_rev(void)
-{
-	return 0;
-}
 
 int board_early_init_f(void)
 {
@@ -171,9 +159,7 @@ int board_early_init_f(void)
 
 int board_init(void)
 {
-#ifndef CONFIG_USE_IRQ
 	irq_init();
-#endif
 
 	/* arch number of the board */
 	gd->bd->bi_arch_number = MACH_TYPE_OMAPL138_LCDK;
@@ -210,7 +196,7 @@ int board_init(void)
 #endif
 
 
-#ifdef CONFIG_DAVINCI_MMC
+#ifdef CONFIG_MMC_DAVINCI
 	if (davinci_configure_pin_mux(mmc0_pins, ARRAY_SIZE(mmc0_pins)) != 0)
 		return 1;
 #endif
@@ -229,35 +215,12 @@ int board_init(void)
 	return 0;
 }
 
-#ifdef CONFIG_DRIVER_TI_EMAC
-
-/*
- * Initializes on-board ethernet controllers.
- */
-int board_eth_init(bd_t *bis)
-{
-	if (!davinci_emac_initialize()) {
-		printf("Error: Ethernet init failed!\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-#endif /* CONFIG_DRIVER_TI_EMAC */
-
 #define CFG_MAC_ADDR_SPI_BUS	0
 #define CFG_MAC_ADDR_SPI_CS	0
 #define CFG_MAC_ADDR_SPI_MAX_HZ	CONFIG_SF_DEFAULT_SPEED
 #define CFG_MAC_ADDR_SPI_MODE	SPI_MODE_3
 
 #define CFG_MAC_ADDR_OFFSET	(flash->size - SZ_64K)
-
-static int  get_mac_addr(u8 *addr)
-{
-	/* Need to find a way to get MAC ADDRESS */
-	return 0;
-}
 
 void dsp_lpsc_on(unsigned domain, unsigned int id)
 {
@@ -294,7 +257,7 @@ static void dspwake(void)
 	if ((REG(CHIP_REV_ID_REG) & 0x3f) == 0x10)
 		return;
 
-	if (!strcmp(getenv("dspwake"), "no"))
+	if (!strcmp(env_get("dspwake"), "no"))
 		return;
 
 	*resetvect++ = 0x1E000; /* DSP Idle */
@@ -321,27 +284,6 @@ int rmii_hw_init(void)
 
 int misc_init_r(void)
 {
-	uint8_t tmp[20], addr[10];
-
-
-	if (getenv("ethaddr") == NULL) {
-		/* Read Ethernet MAC address from EEPROM */
-		if (dvevm_read_mac_address(addr)) {
-			/* Set Ethernet MAC address from EEPROM */
-			davinci_sync_env_enetaddr(addr);
-		} else {
-			get_mac_addr(addr);
-		}
-
-		if (is_multicast_ethaddr(addr) || is_zero_ethaddr(addr)) {
-			printf("Invalid MAC address read.\n");
-			return -EINVAL;
-		}
-		sprintf((char *)tmp, "%02x:%02x:%02x:%02x:%02x:%02x", addr[0],
-				addr[1], addr[2], addr[3], addr[4], addr[5]);
-
-		setenv("ethaddr", (char *)tmp);
-	}
 #ifdef CONFIG_DRIVER_TI_EMAC_USE_RMII
 	/* Select RMII fucntion through the expander */
 	if (rmii_hw_init())
@@ -353,19 +295,55 @@ int misc_init_r(void)
 	return 0;
 }
 
-#ifdef CONFIG_DAVINCI_MMC
+#if !CONFIG_IS_ENABLED(DM_MMC)
+#ifdef CONFIG_MMC_DAVINCI
 static struct davinci_mmc mmc_sd0 = {
 	.reg_base = (struct davinci_mmc_regs *)DAVINCI_MMC_SD0_BASE,
 	.host_caps = MMC_MODE_4BIT,     /* DA850 supports only 4-bit SD/MMC */
 	.voltages = MMC_VDD_32_33 | MMC_VDD_33_34,
-	.version = MMC_CTLR_VERSION_2,
 };
 
-int board_mmc_init(bd_t *bis)
+int board_mmc_init(struct bd_info *bis)
 {
 	mmc_sd0.input_clk = clk_get(DAVINCI_MMCSD_CLKID);
 
 	/* Add slot-0 to mmc subsystem */
 	return davinci_mmc_init(bis, &mmc_sd0);
+}
+#endif
+#endif
+
+#ifdef CONFIG_SPL_BUILD
+static const struct ns16550_plat serial_pdata = {
+	.base = DAVINCI_UART2_BASE,
+	.reg_shift = 2,
+	.clock = 228000000,
+	.fcr = UART_FCR_DEFVAL,
+};
+
+U_BOOT_DRVINFO(omapl138_uart) = {
+	.name = "ns16550_serial",
+	.plat = &serial_pdata,
+};
+
+static const struct davinci_mmc_plat mmc_plat = {
+	.reg_base = (struct davinci_mmc_regs *)DAVINCI_MMC_SD0_BASE,
+	.cfg = {
+		.f_min = 200000,
+		.f_max = 25000000,
+		.voltages = MMC_VDD_32_33 | MMC_VDD_33_34,
+		.host_caps = MMC_MODE_4BIT,
+		.b_max = DAVINCI_MAX_BLOCKS,
+		.name = "da830-mmc",
+	},
+};
+U_BOOT_DRVINFO(omapl138_mmc) = {
+	.name = "ti_da830_mmc",
+	.plat = &mmc_plat,
+};
+
+void spl_board_init(void)
+{
+	davinci_configure_pin_mux(mmc0_pins, ARRAY_SIZE(mmc0_pins));
 }
 #endif

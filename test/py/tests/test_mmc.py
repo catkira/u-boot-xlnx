@@ -18,11 +18,15 @@ def test_mmc_list(u_boot_console):
     if "No MMC device available" in output:
         pytest.skip('No SD/MMC/eMMC controller available')
 
-    array = output.split( )
+    if "Card did not respond to voltage select" in output:
+        pytest.skip('No SD/MMC card present')
 
+    array = output.split( )
     global devices
     global controllers
-    controllers = len(array) / 2
+    # FIXME this should be changed - 2020.01 U-Boot doesn't
+    # detect type by default. After mmcinfor you can see (SD)
+    controllers = int(len(array) / 2)
     for x in range(0, controllers):
         y = x * 2
         devices[x] = {}
@@ -31,6 +35,7 @@ def test_mmc_list(u_boot_console):
     global mmc_set_up
     mmc_set_up = True
 
+@pytest.mark.xfail
 @pytest.mark.buildconfigspec("cmd_mmc")
 def test_mmc_dev(u_boot_console):
     if not mmc_set_up:
@@ -38,14 +43,19 @@ def test_mmc_dev(u_boot_console):
 
     fail = 0
     for x in range(0, controllers):
+        devices[x]["detected"] = "yes"
         output = u_boot_console.run_command('mmc dev %d' % x)
 
         # Some sort of switch here
         if "Card did not respond to voltage select" in output:
             fail = 1
             devices[x]["detected"] = "no"
-        else:
-            devices[x]["detected"] = "yes"
+
+        if "no mmc device at slot" in output:
+            devices[x]["detected"] = "no"
+
+        if "MMC: no card present" in output:
+            devices[x]["detected"] = "no"
 
     if fail:
         pytest.fail("Card not present")
@@ -62,10 +72,10 @@ def test_mmcinfo(u_boot_console):
             if "busy timeout" in output:
                   pytest.skip('No SD/MMC/eMMC device present')
 
-            obj = re.search(r'Capacity: (\d+[\.]?\d)', output)
+            obj = re.search(r'Capacity: (\d+|\d+[\.]?\d)', output)
             try:
                 capacity = float(obj.groups()[0])
-                print capacity
+                print (capacity)
                 devices[x]["capacity"] = capacity
                 print ("Capacity of dev %d is: %g GiB" % (x, capacity))
             except ValueError:
@@ -82,10 +92,10 @@ def test_mmc_info(u_boot_console):
 
             output = u_boot_console.run_command("mmc info")
 
-            obj = re.search(r'Capacity: (\d+[\.]?\d)', output)
+            obj = re.search(r'Capacity: (\d+|\d+[\.]?\d)', output)
             try:
                 capacity = float(obj.groups()[0])
-                print capacity
+                print (capacity)
                 if devices[x]["capacity"] != capacity:
                       pytest.fail("MMC capacity doesn't match mmcinfo")
 
@@ -133,10 +143,10 @@ def test_mmc_part(u_boot_console):
                     print ("part_id:%d, part_type:%s" % (part_id, part_type))
 
                     if part_type == '0c' or part_type == '0b' or part_type == '0e':
-                        print "Fat detected"
+                        print ("Fat detected")
                         part_fat.append(part_id)
                     elif part_type == '83':
-                        print "ext detected"
+                        print ("ext detected")
                         part_ext.append(part_id)
                     else:
                         pytest.fail("Unsupported Filesystem on device %d" % x)
@@ -173,7 +183,7 @@ def test_mmc_fatls_fatinfo(u_boot_console):
                         partitions.remove(part)
                         pytest.fail("Unrecognized filesystem")
 
-                if not re.search("\d file\(s\), \d dir\(s\)", output):
+                if not re.search(r'\d file\(s\), \d dir\(s\)', output):
                     pytest.fail("%s read failed on device %d" % (fs.upper, x))
                 # Maybe separate this usecase
                 # Also maybe detect not readable chars
@@ -435,7 +445,7 @@ def test_mmc_ls(u_boot_console):
                 for part in partitions:
                     part_detect = 1
                     output = u_boot_console.run_command("ls mmc %d:%s" % (x, part))
-                    if re.search("No \w+ table on this device", output):
+                    if re.search(r'No \w+ table on this device', output):
                         pytest.fail("%s: Partition table not found %d" % (fs.upper(), x))
 
     if not part_detect:
@@ -519,3 +529,113 @@ def test_mmc_save(u_boot_console):
 
     if not part_detect:
         pytest.skip("No partition detected")
+
+@pytest.mark.buildconfigspec("cmd_mmc")
+@pytest.mark.buildconfigspec("cmd_fat")
+@pytest.mark.buildconfigspec("cmd_memory")
+def test_mmc_fat_read_write_files(u_boot_console):
+    test_mmc_list(u_boot_console)
+    test_mmc_dev(u_boot_console)
+    test_mmcinfo(u_boot_console)
+    test_mmc_part(u_boot_console)
+    if not mmc_set_up:
+        pytest.skip("No SD/MMC/eMMC controller available")
+
+    if not devices:
+        pytest.skip("No devices detected")
+
+    part_detect = 0
+    fs = "fat"
+
+    # Number of files to be written/read in MMC card
+    num_files = 100
+
+    for x in range(0, controllers):
+        if devices[x]["detected"] == "yes":
+            u_boot_console.run_command("mmc dev %d" % x)
+            try:
+                partitions = devices[x][fs]
+            except:
+                print("No %s table on this device" % fs.upper())
+                continue
+
+            for part in partitions:
+                part_detect = 1
+                addr = u_boot_utils.find_ram_base(u_boot_console)
+                count_f = 0
+                addr_l = []
+                size_l = []
+                file_l = []
+                crc32_l = []
+                offset_l = []
+                addr_l.append(addr)
+
+                while count_f < num_files:
+                    size_l.append(random.randint(4, 1 * 1024 * 1024))
+
+                    # CRC32 count
+                    output = u_boot_console.run_command(
+                        "crc32 %x %x" % (addr_l[count_f], size_l[count_f])
+                    )
+                    m = re.search("==> (.+?)", output)
+                    if not m:
+                        pytest.fail("CRC32 failed")
+                    crc32_l.append(m.group(1))
+
+                    # Write operation
+                    file_l.append("%s_%d_%d" % ("uboot_test", count_f, size_l[count_f]))
+                    output = u_boot_console.run_command(
+                        "%swrite mmc %d:%s %x %s %x"
+                        % (
+                            fs,
+                            x,
+                            part,
+                            addr_l[count_f],
+                            file_l[count_f],
+                            size_l[count_f],
+                        )
+                    )
+                    assert "Unable to write" not in output
+                    assert "Error" not in output
+                    assert "overflow" not in output
+                    expected_text = "%d bytes written" % size_l[count_f]
+                    assert expected_text in output
+
+                    addr_l.append(addr_l[count_f] + size_l[count_f] + 1048576)
+                    count_f += 1
+
+                count_f = 0
+                while count_f < num_files:
+                    alignment = int(
+                        u_boot_console.config.buildconfig.get(
+                            "config_sys_cacheline_size", 128
+                        )
+                    )
+                    offset_l.append(random.randrange(alignment, 1024, alignment))
+
+                    # Read operation
+                    output = u_boot_console.run_command(
+                        "%sload mmc %d:%s %x %s"
+                        % (
+                            fs,
+                            x,
+                            part,
+                            addr_l[count_f] + offset_l[count_f],
+                            file_l[count_f],
+                        )
+                    )
+                    assert "Invalid FAT entry" not in output
+                    assert "Unable to read file" not in output
+                    assert "Misaligned buffer address" not in output
+                    expected_text = "%d bytes read" % size_l[count_f]
+                    assert expected_text in output
+
+                    output = u_boot_console.run_command(
+                        "crc32 %x $filesize" % (addr_l[count_f] + offset_l[count_f])
+                    )
+                    assert crc32_l[count_f] in output
+
+                    count_f += 1
+
+    if not part_detect:
+        pytest.skip("No %s partition detected" % fs.upper())

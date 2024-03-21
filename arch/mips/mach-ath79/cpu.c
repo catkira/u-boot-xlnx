@@ -1,12 +1,13 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015-2016 Wills Wang <wills.wang@live.com>
- *
- * SPDX-License-Identifier: GPL-2.0+
  */
 
 #include <common.h>
+#include <init.h>
 #include <asm/io.h>
 #include <asm/addrspace.h>
+#include <asm/global_data.h>
 #include <asm/types.h>
 #include <mach/ath79.h>
 #include <mach/ar71xx_regs.h>
@@ -46,7 +47,7 @@ static const struct ath79_soc_desc desc[] = {
 	{ATH79_SOC_QCA9561,     "9561", REV_ID_MAJOR_QCA9561,   0},
 };
 
-int arch_cpu_init(void)
+int mach_cpu_init(void)
 {
 	void __iomem *base;
 	enum ath79_soc_type soc = ATH79_SOC_UNKNOWN;

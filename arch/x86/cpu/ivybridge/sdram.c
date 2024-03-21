@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2011 The Chromium OS Authors.
  * (C) Copyright 2010,2011
@@ -6,19 +7,21 @@
  * Portions from Coreboot mainboard/google/link/romstage.c
  * Copyright (C) 2007-2010 coresystems GmbH
  * Copyright (C) 2011 Google Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
+#include <dm.h>
 #include <errno.h>
 #include <fdtdec.h>
+#include <init.h>
+#include <log.h>
 #include <malloc.h>
 #include <net.h>
 #include <rtc.h>
 #include <spi.h>
 #include <spi_flash.h>
 #include <syscon.h>
+#include <sysreset.h>
 #include <asm/cpu.h>
 #include <asm/processor.h>
 #include <asm/gpio.h>
@@ -41,14 +44,16 @@ DECLARE_GLOBAL_DATA_PTR;
 #define CMOS_OFFSET_MRC_SEED_S3		156
 #define CMOS_OFFSET_MRC_SEED_CHK	160
 
-ulong board_get_usable_ram_top(ulong total_size)
+phys_size_t board_get_usable_ram_top(phys_size_t total_size)
 {
 	return mrc_common_board_get_usable_ram_top(total_size);
 }
 
-void dram_init_banksize(void)
+int dram_init_banksize(void)
 {
 	mrc_common_dram_init_banksize();
+
+	return 0;
 }
 
 static int read_seed_from_cmos(struct pei_data *pei_data)
@@ -113,7 +118,7 @@ static int prepare_mrc_cache(struct pei_data *pei_data)
 	ret = read_seed_from_cmos(pei_data);
 	if (ret)
 		return ret;
-	ret = mrccache_get_region(NULL, &entry);
+	ret = mrccache_get_region(MRC_TYPE_NORMAL, NULL, &entry);
 	if (ret)
 		return ret;
 	mrc_cache = mrccache_find_current(&entry);
@@ -207,8 +212,10 @@ static int copy_spd(struct udevice *dev, struct pei_data *peid)
 	int ret;
 
 	ret = mrc_locate_spd(dev, sizeof(peid->spd_data[0]), &data);
-	if (ret)
+	if (ret) {
+		debug("%s: Could not locate SPD (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 
 	memcpy(peid->spd_data[0], data, sizeof(peid->spd_data[0]));
 
@@ -229,7 +236,6 @@ static int sdram_find(struct udevice *dev)
 	uint32_t tseg_base, uma_size, tolud;
 	uint64_t tom, me_base, touud;
 	uint64_t uma_memory_base = 0;
-	uint64_t uma_memory_size;
 	unsigned long long tomk;
 	uint16_t ggc;
 	u32 val;
@@ -294,7 +300,6 @@ static int sdram_find(struct udevice *dev)
 		tolud += uma_size << 10;
 		/* UMA starts at old TOLUD */
 		uma_memory_base = tomk * 1024ULL;
-		uma_memory_size = uma_size * 1024ULL;
 		debug("ME UMA base %llx size %uM\n", me_base, uma_size >> 10);
 	}
 
@@ -308,13 +313,11 @@ static int sdram_find(struct udevice *dev)
 		debug("%uM UMA", uma_size >> 10);
 		tomk -= uma_size;
 		uma_memory_base = tomk * 1024ULL;
-		uma_memory_size += uma_size * 1024ULL;
 
 		/* GTT Graphics Stolen Memory Size (GGMS) */
 		uma_size = ((ggc >> 8) & 0x3) * 1024ULL;
 		tomk -= uma_size;
 		uma_memory_base = tomk * 1024ULL;
-		uma_memory_size += uma_size * 1024ULL;
 		debug(" and %uM GTT\n", uma_size >> 10);
 	}
 
@@ -323,7 +326,6 @@ static int sdram_find(struct udevice *dev)
 	uma_size = (uma_memory_base - tseg_base) >> 10;
 	tomk -= uma_size;
 	uma_memory_base = tomk * 1024ULL;
-	uma_memory_size += uma_size * 1024ULL;
 	debug("TSEG base 0x%08x size %uM\n", tseg_base, uma_size >> 10);
 
 	debug("Available memory below 4GB: %lluM\n", tomk >> 10);
@@ -458,15 +460,29 @@ int dram_init(void)
 	struct udevice *dev, *me_dev;
 	int ret;
 
+	/* We need the pinctrl set up early */
+	ret = syscon_get_by_driver_data(X86_SYSCON_PINCONF, &dev);
+	if (ret) {
+		debug("%s: Could not get pinconf (ret=%d)\n", __func__, ret);
+		return ret;
+	}
+
 	ret = uclass_first_device_err(UCLASS_NORTHBRIDGE, &dev);
-	if (ret)
+	if (ret) {
+		debug("%s: Could not get northbridge (ret=%d)\n", __func__,
+		      ret);
 		return ret;
+	}
 	ret = syscon_get_by_driver_data(X86_SYSCON_ME, &me_dev);
-	if (ret)
+	if (ret) {
+		debug("%s: Could not get ME (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 	ret = copy_spd(dev, pei_data);
-	if (ret)
+	if (ret) {
+		debug("%s: Could not get SPD (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 	pei_data->boot_mode = gd->arch.pei_boot_mode;
 	debug("Boot mode %d\n", gd->arch.pei_boot_mode);
 	debug("mrc_input %p\n", pei_data->mrc_input);
@@ -485,7 +501,7 @@ int dram_init(void)
 	/* If MRC data is not found we cannot continue S3 resume. */
 	if (pei_data->boot_mode == PEI_BOOT_RESUME && !pei_data->mrc_input) {
 		debug("Giving up in sdram_initialize: No MRC data\n");
-		reset_cpu(0);
+		sysreset_walk_halt(SYSRESET_COLD);
 	}
 
 	/* Pass console handler in pei_data */
@@ -493,19 +509,27 @@ int dram_init(void)
 
 	/* Wait for ME to be ready */
 	ret = intel_early_me_init(me_dev);
-	if (ret)
+	if (ret) {
+		debug("%s: Could not init ME (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 	ret = intel_early_me_uma_size(me_dev);
-	if (ret < 0)
+	if (ret < 0) {
+		debug("%s: Could not get UMA size (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 
 	ret = mrc_common_init(dev, pei_data, false);
-	if (ret)
+	if (ret) {
+		debug("%s: mrc_common_init() failed (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 
 	ret = sdram_find(dev);
-	if (ret)
+	if (ret) {
+		debug("%s: sdram_find() failed (ret=%d)\n", __func__, ret);
 		return ret;
+	}
 	gd->ram_size = gd->arch.meminfo.total_32bit_memory;
 
 	debug("MRC output data length %#x at %p\n", pei_data->mrc_output_len,
@@ -516,12 +540,14 @@ int dram_init(void)
 
 	/* S3 resume: don't save scrambler seed or MRC data */
 	if (pei_data->boot_mode != PEI_BOOT_RESUME) {
+		struct mrc_output *mrc = &gd->arch.mrc[MRC_TYPE_NORMAL];
+
 		/*
 		 * This will be copied to SDRAM in reserve_arch(), then written
 		 * to SPI flash in mrccache_save()
 		 */
-		gd->arch.mrc_output = (char *)pei_data->mrc_output;
-		gd->arch.mrc_output_len = pei_data->mrc_output_len;
+		mrc->buf = (char *)pei_data->mrc_output;
+		mrc->len = pei_data->mrc_output_len;
 		ret = write_seeds_to_cmos(pei_data);
 		if (ret)
 			debug("Failed to write seeds to CMOS: %d\n", ret);

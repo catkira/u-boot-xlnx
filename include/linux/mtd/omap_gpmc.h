@@ -1,13 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2004-2008 Texas Instruments, <www.ti.com>
  * Rohit Choraria <rohitkc@ti.com>
  *
  * (C) Copyright 2013 Andreas Bießmann <andreas@biessmann.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef __ASM_OMAP_GPMC_H
 #define __ASM_OMAP_GPMC_H
+
+/* Maximum Number of Chip Selects */
+#define GPMC_CS_NUM	8
 
 #define GPMC_BUF_EMPTY	0
 #define GPMC_BUF_FULL	1
@@ -92,6 +94,7 @@ struct gpmc {
 };
 
 /* Used for board specific gpmc initialization */
-extern struct gpmc *gpmc_cfg;
+extern const struct gpmc *gpmc_cfg;
+extern char gpmc_cs0_flash;
 
 #endif /* __ASM_OMAP_GPMC_H */

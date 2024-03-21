@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2007
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
  * Author: Sergei Poselenov <sposelenov@emcraft.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -44,7 +43,7 @@ int fpu_post_test (int flags)
 
 	int ret = 0;
 
-	WATCHDOG_RESET ();
+	schedule();
 
 	if (!fpu)
 		fpu_enable ();
@@ -67,7 +66,7 @@ int fpu_post_test (int flags)
 	if (!fpu)
 		fpu_disable ();
 
-	WATCHDOG_RESET ();
+	schedule();
 
 	return ret;
 }

@@ -1,13 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Keystone EVM : Board initialization
  *
  * (C) Copyright 2014
  *     Texas Instruments Incorporated, <www.ti.com>
- *
- * SPDX-License-Identifier:     GPL-2.0+
  */
 
 #include <common.h>
+#include <env.h>
+#include <init.h>
 #include <asm/io.h>
 #include <asm/arch/psc_defs.h>
 #include <asm/arch/hardware.h>
@@ -46,7 +47,7 @@ int misc_init_r(void)
 	char *env;
 	long ks2_debug = 0;
 
-	env = getenv("ks2_debug");
+	env = env_get("ks2_debug");
 
 	if (env)
 		ks2_debug = simple_strtol(env, NULL, 0);

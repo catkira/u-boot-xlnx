@@ -11,10 +11,9 @@
 	};
 
 	aliases {
-		usb0 = "/usb@c5008000";
-		usb1 = "/usb@c5000000";
-		sdhci0 = "/sdhci@c8000600";
-		sdhci1 = "/sdhci@c8000000";
+		usb0 = "/usb@c5000000";
+		mmc0 = "/sdhci@c8000600";
+		mmc1 = "/sdhci@c8000000";
 		spi0 = "/spi@7000c380";
 	};
 
@@ -31,7 +30,7 @@
 		spi-max-frequency = <25000000>;
 	};
 
-	pcie-controller@80003000 {
+	pcie@80003000 {
 		status = "okay";
 
 		avdd-pex-supply = <&pci_vdd_reg>;
@@ -129,4 +128,8 @@
 		};
 	};
 
+};
+
+&uarta {
+	status = "okay";
 };

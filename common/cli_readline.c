@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
@@ -5,14 +6,15 @@
  * Add to readline cmdline-editing by
  * (C) Copyright 2005
  * JinHua Luo, GuangDong Linux Center, <luo.jinhua@gd-linux.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <bootretry.h>
 #include <cli.h>
+#include <command.h>
+#include <time.h>
 #include <watchdog.h>
+#include <asm/global_data.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -67,11 +69,16 @@ static char *delete_char (char *buffer, char *p, int *colp, int *np, int plen)
 #define CREAD_HIST_CHAR		('!')
 
 #define getcmd_putch(ch)	putc(ch)
-#define getcmd_getch()		getc()
+#define getcmd_getch()		getchar()
 #define getcmd_cbeep()		getcmd_putch('\a')
 
+#ifdef CONFIG_SPL_BUILD
+#define HIST_MAX		3
+#define HIST_SIZE		32
+#else
 #define HIST_MAX		20
 #define HIST_SIZE		CONFIG_SYS_CBSIZE
+#endif
 
 static int hist_max;
 static int hist_add_idx;
@@ -267,12 +274,16 @@ static int cread_line(const char *const prompt, char *buf, unsigned int *len,
 			while (!tstc()) {	/* while no incoming data */
 				if (get_ticks() >= etime)
 					return -2;	/* timed out */
-				WATCHDOG_RESET();
+				schedule();
 			}
 			first = 0;
 		}
 
 		ichar = getcmd_getch();
+
+		/* ichar=0x0 when error occurs in U-Boot getc */
+		if (!ichar)
+			continue;
 
 		if ((ichar == '\n') || (ichar == '\r')) {
 			putc('\n');
@@ -283,46 +294,100 @@ static int cread_line(const char *const prompt, char *buf, unsigned int *len,
 		 * handle standard linux xterm esc sequences for arrow key, etc.
 		 */
 		if (esc_len != 0) {
-			if (esc_len == 1) {
-				if (ichar == '[') {
-					esc_save[esc_len] = ichar;
-					esc_len = 2;
-				} else {
-					cread_add_str(esc_save, esc_len,
-						      insert, &num, &eol_num,
-						      buf, *len);
-					esc_len = 0;
-				}
-				continue;
-			}
+			enum { ESC_REJECT, ESC_SAVE, ESC_CONVERTED } act = ESC_REJECT;
 
-			switch (ichar) {
-			case 'D':	/* <- key */
-				ichar = CTL_CH('b');
-				esc_len = 0;
-				break;
-			case 'C':	/* -> key */
-				ichar = CTL_CH('f');
-				esc_len = 0;
-				break;	/* pass off to ^F handler */
-			case 'H':	/* Home key */
-				ichar = CTL_CH('a');
-				esc_len = 0;
-				break;	/* pass off to ^A handler */
-			case 'A':	/* up arrow */
-				ichar = CTL_CH('p');
-				esc_len = 0;
-				break;	/* pass off to ^P handler */
-			case 'B':	/* down arrow */
-				ichar = CTL_CH('n');
-				esc_len = 0;
-				break;	/* pass off to ^N handler */
-			default:
+			if (esc_len == 1) {
+				if (ichar == '[' || ichar == 'O')
+					act = ESC_SAVE;
+			} else if (esc_len == 2) {
+				switch (ichar) {
+				case 'D':	/* <- key */
+					ichar = CTL_CH('b');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^B handler */
+				case 'C':	/* -> key */
+					ichar = CTL_CH('f');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^F handler */
+				case 'H':	/* Home key */
+					ichar = CTL_CH('a');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^A handler */
+				case 'F':	/* End key */
+					ichar = CTL_CH('e');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^E handler */
+				case 'A':	/* up arrow */
+					ichar = CTL_CH('p');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^P handler */
+				case 'B':	/* down arrow */
+					ichar = CTL_CH('n');
+					act = ESC_CONVERTED;
+					break;	/* pass off to ^N handler */
+				case '1':
+				case '2':
+				case '3':
+				case '4':
+				case '7':
+				case '8':
+					if (esc_save[1] == '[') {
+						/* see if next character is ~ */
+						act = ESC_SAVE;
+					}
+					break;
+				}
+			} else if (esc_len == 3) {
+				switch (ichar) {
+				case '~':
+					switch (esc_save[2]) {
+					case '3':	/* Delete key */
+						ichar = CTL_CH('d');
+						act = ESC_CONVERTED;
+						break;	/* pass to ^D handler */
+					case '1':	/* Home key */
+					case '7':
+						ichar = CTL_CH('a');
+						act = ESC_CONVERTED;
+						break;	/* pass to ^A handler */
+					case '4':	/* End key */
+					case '8':
+						ichar = CTL_CH('e');
+						act = ESC_CONVERTED;
+						break;	/* pass to ^E handler */
+					}
+					break;
+				case '0':
+					if (esc_save[2] == '2')
+						act = ESC_SAVE;
+					break;
+				}
+			} else if (esc_len == 4) {
+				switch (ichar) {
+				case '0':
+				case '1':
+					act = ESC_SAVE;
+					break;		/* bracketed paste */
+				}
+			} else if (esc_len == 5) {
+				if (ichar == '~') {	/* bracketed paste */
+					ichar = 0;
+					act = ESC_CONVERTED;
+				}
+			}
+			switch (act) {
+			case ESC_SAVE:
+				esc_save[esc_len++] = ichar;
+				continue;
+			case ESC_REJECT:
 				esc_save[esc_len++] = ichar;
 				cread_add_str(esc_save, esc_len, insert,
 					      &num, &eol_num, buf, *len);
 				esc_len = 0;
 				continue;
+			case ESC_CONVERTED:
+				esc_len = 0;
+				break;
 			}
 		}
 
@@ -528,15 +593,9 @@ int cli_readline_into_buffer(const char *const prompt, char *buffer,
 	for (;;) {
 		if (bootretry_tstc_timeout())
 			return -2;	/* timed out */
-		WATCHDOG_RESET();	/* Trigger watchdog, if needed */
+		schedule();	/* Trigger watchdog, if needed */
 
-#ifdef CONFIG_SHOW_ACTIVITY
-		while (!tstc()) {
-			show_activity(0);
-			WATCHDOG_RESET();
-		}
-#endif
-		c = getc();
+		c = getchar();
 
 		/*
 		 * Special character handling

@@ -1,28 +1,35 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright 2021 NXP
  */
 #include <common.h>
+#include <clock_legacy.h>
+#include <display_options.h>
+#include <env.h>
+#include <init.h>
 #include <malloc.h>
 #include <errno.h>
 #include <netdev.h>
 #include <fsl_ifc.h>
 #include <fsl_ddr.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <fdt_support.h>
-#include <libfdt.h>
-#include <fsl_debug_server.h>
+#include <linux/libfdt.h>
 #include <fsl-mc/fsl_mc.h>
-#include <environment.h>
+#include <env_internal.h>
 #include <i2c.h>
 #include <rtc.h>
 #include <asm/arch/soc.h>
 #include <hwconfig.h>
-#include <fsl_sec.h>
+#include <asm/arch/ppa.h>
+#include <asm/arch-fsl-layerscape/fsl_icid.h>
+#include "../common/i2c_mux.h"
 
 #include "../common/qixis.h"
 #include "ls2080aqds_qixis.h"
+#include "../common/vid.h"
 
 #define PIN_MUX_SEL_SDHC	0x00
 #define PIN_MUX_SEL_DSPI	0x0a
@@ -156,19 +163,6 @@ unsigned long get_board_ddr_clk(void)
 	return 66666666;
 }
 
-int select_i2c_ch_pca9547(u8 ch)
-{
-	int ret;
-
-	ret = i2c_write(I2C_MUX_PCA_ADDR_PRI, 0, 1, &ch, 1);
-	if (ret) {
-		puts("PCA: failed to select proper channel\n");
-		return ret;
-	}
-
-	return 0;
-}
-
 int config_board_mux(int ctrl_type)
 {
 	u8 reg5;
@@ -202,7 +196,7 @@ int board_init(void)
 
 	val = in_le32(dcfg_ccsr + DCFG_RCWSR13 / 4);
 
-	env_hwconfig = getenv("hwconfig");
+	env_hwconfig = env_get("hwconfig");
 
 	if (hwconfig_f("dspi", env_hwconfig) &&
 	    DCFG_RCWSR13_DSPI == (val & (u32)(0xf << 8)))
@@ -210,7 +204,7 @@ int board_init(void)
 	else
 		config_board_mux(MUX_TYPE_SDHC);
 
-#if defined(CONFIG_NAND) && defined(CONFIG_FSL_QSPI)
+#if defined(CONFIG_MTD_RAW_NAND) && defined(CONFIG_FSL_QSPI)
 	val = in_le32(dcfg_ccsr + DCFG_RCWSR15 / 4);
 
 	if (DCFG_RCWSR15_IFCGRPABASE_QSPI == (val & (u32)0x3))
@@ -219,18 +213,30 @@ int board_init(void)
 			     FSL_QIXIS_BRDCFG9_QSPI);
 #endif
 
-#ifdef CONFIG_ENV_IS_NOWHERE
-	gd->env_addr = (ulong)&default_environment[0];
-#endif
-	select_i2c_ch_pca9547(I2C_MUX_CH_DEFAULT);
+	select_i2c_ch_pca9547(I2C_MUX_CH_DEFAULT, 0);
+
+#ifdef CONFIG_RTC_ENABLE_32KHZ_OUTPUT
+#if CONFIG_IS_ENABLED(DM_I2C)
+	rtc_enable_32khz_output(0, CONFIG_SYS_I2C_RTC_ADDR);
+#else
 	rtc_enable_32khz_output();
+#endif
+#endif
+
+#ifdef CONFIG_FSL_LS_PPA
+	ppa_init();
+#endif
+
+#if !defined(CONFIG_SYS_EARLY_PCI_INIT) && defined(CONFIG_DM_ETH)
+	pci_init();
+#endif
 
 	return 0;
 }
 
 int board_early_init_f(void)
 {
-#ifdef CONFIG_SYS_I2C_EARLY_INIT
+#if defined(CONFIG_SYS_I2C_EARLY_INIT)
 	i2c_early_init_f();
 #endif
 	fsl_lsch3_early_init_f();
@@ -238,6 +244,14 @@ int board_early_init_f(void)
 	/* input clk: 1/2 platform clk, output: input/20 */
 	out_le32(SCFG_BASE + SCFG_QSPICLKCTLR, SCFG_QSPICLKCTRL_DIV_20);
 #endif
+	return 0;
+}
+
+int misc_init_r(void)
+{
+	if (adjust_vdd(0))
+		printf("Warning: Adjusting core voltage failed.\n");
+
 	return 0;
 }
 
@@ -255,27 +269,7 @@ void detail_board_ddr_info(void)
 #endif
 }
 
-int dram_init(void)
-{
-	gd->ram_size = initdram(0);
-
-	return 0;
-}
-
-#if defined(CONFIG_ARCH_MISC_INIT)
-int arch_misc_init(void)
-{
-#ifdef CONFIG_FSL_DEBUG_SERVER
-	debug_server_init();
-#endif
-#ifdef CONFIG_FSL_CAAM
-	sec_init();
-#endif
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_FSL_MC_ENET
+#if defined(CONFIG_FSL_MC_ENET) && !defined(CONFIG_SPL_BUILD)
 void fdt_fixup_board_enet(void *fdt)
 {
 	int offset;
@@ -291,19 +285,22 @@ void fdt_fixup_board_enet(void *fdt)
 		return;
 	}
 
-	if (get_mc_boot_status() == 0)
+	if (get_mc_boot_status() == 0 &&
+	    (is_lazy_dpl_addr_valid() || get_dpl_apply_status() == 0))
 		fdt_status_okay(fdt, offset);
 	else
 		fdt_status_fail(fdt, offset);
 }
+
+void board_quiesce_devices(void)
+{
+	fsl_mc_ldpaa_exit(gd->bd);
+}
 #endif
 
 #ifdef CONFIG_OF_BOARD_SETUP
-int ft_board_setup(void *blob, bd_t *bd)
+int ft_board_setup(void *blob, struct bd_info *bd)
 {
-#ifdef CONFIG_FSL_MC_ENET
-	int err;
-#endif
 	u64 base[CONFIG_NR_DRAM_BANKS];
 	u64 size[CONFIG_NR_DRAM_BANKS];
 
@@ -315,16 +312,27 @@ int ft_board_setup(void *blob, bd_t *bd)
 	base[1] = gd->bd->bi_dram[1].start;
 	size[1] = gd->bd->bi_dram[1].size;
 
+#ifdef CONFIG_RESV_RAM
+	/* reduce size if reserved memory is within this bank */
+	if (gd->arch.resv_ram >= base[0] &&
+	    gd->arch.resv_ram < base[0] + size[0])
+		size[0] = gd->arch.resv_ram - base[0];
+	else if (gd->arch.resv_ram >= base[1] &&
+		 gd->arch.resv_ram < base[1] + size[1])
+		size[1] = gd->arch.resv_ram - base[1];
+#endif
+
 	fdt_fixup_memory_banks(blob, base, size, 2);
 
-	fdt_fixup_dr_usb(blob, bd);
+	fdt_fsl_mc_fixup_iommu_map_entry(blob);
 
-#ifdef CONFIG_FSL_MC_ENET
+	fsl_fdt_fixup_dr_usb(blob, bd);
+
+#if defined(CONFIG_FSL_MC_ENET) && !defined(CONFIG_SPL_BUILD)
 	fdt_fixup_board_enet(blob);
-	err = fsl_mc_ldpaa_exit(bd);
-	if (err)
-		return err;
 #endif
+
+	fdt_fixup_icid(blob);
 
 	return 0;
 }

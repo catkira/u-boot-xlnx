@@ -1,13 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2013 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <command.h>
+#include <env.h>
+#include <fdt_support.h>
 #include <hwconfig.h>
+#include <image.h>
+#include <init.h>
+#include <log.h>
 #include <netdev.h>
+#include <asm/global_data.h>
 #include <linux/compiler.h>
 #include <asm/mmu.h>
 #include <asm/processor.h>
@@ -29,7 +34,7 @@ int checkboard(void)
 	struct cpu_type *cpu = gd->arch.cpu;
 	u8 sw;
 
-#ifdef CONFIG_T104XD4RDB
+#if defined(CONFIG_TARGET_T1040D4RDB) || defined(CONFIG_TARGET_T1042D4RDB)
 	printf("Board: %sD4RDB\n", cpu->name);
 #else
 	printf("Board: %sRDB\n", cpu->name);
@@ -88,7 +93,7 @@ int board_early_init_r(void)
 
 int misc_init_r(void)
 {
-	ccsr_gur_t __iomem *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t __iomem *gur = (void *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 	u32 srds_s1;
 
 	srds_s1 = in_be32(&gur->rcwsr[4]) >> 24;
@@ -105,7 +110,7 @@ int misc_init_r(void)
 		CPLD_WRITE(misc_ctl_status, CPLD_READ(misc_ctl_status) |
 					 MISC_CTL_SG_SEL | MISC_CTL_AURORA_SEL);
 
-#if defined(CONFIG_T1040D4RDB)
+#if defined(CONFIG_TARGET_T1040D4RDB)
 	if (hwconfig("qe-tdm")) {
 		CPLD_WRITE(sfp_ctl_status, CPLD_READ(sfp_ctl_status) |
 			   MISC_MUX_QE_TDM);
@@ -125,15 +130,15 @@ int misc_init_r(void)
 	return 0;
 }
 
-int ft_board_setup(void *blob, bd_t *bd)
+int ft_board_setup(void *blob, struct bd_info *bd)
 {
 	phys_addr_t base;
 	phys_size_t size;
 
 	ft_cpu_setup(blob, bd);
 
-	base = getenv_bootm_low();
-	size = getenv_bootm_size();
+	base = env_get_bootm_low();
+	size = env_get_bootm_size();
 
 	fdt_fixup_memory(blob, (u64)base, (u64)size);
 
@@ -144,11 +149,13 @@ int ft_board_setup(void *blob, bd_t *bd)
 	fdt_fixup_liodn(blob);
 
 #ifdef CONFIG_HAS_FSL_DR_USB
-	fdt_fixup_dr_usb(blob, bd);
+	fsl_fdt_fixup_dr_usb(blob, bd);
 #endif
 
 #ifdef CONFIG_SYS_DPAA_FMAN
+#ifndef CONFIG_DM_ETH
 	fdt_fixup_fman_ethernet(blob);
+#endif
 #endif
 
 	if (hwconfig("qe-tdm"))

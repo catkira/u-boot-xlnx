@@ -17,26 +17,146 @@
  * and/or modified under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
  * License, or (at your option) any later version.
+ *
+ * The function nand_biterror() in this file is inspired from
+ * mtd-utils/nand-utils/nandflipbits.c which was released under GPLv2
+ * only
  */
 
 #include <common.h>
+#include <bootstage.h>
+#include <image.h>
+#include <asm/cache.h>
 #include <linux/mtd/mtd.h>
+#include <linux/mtd/rawnand.h>
 #include <command.h>
 #include <console.h>
+#include <env.h>
 #include <watchdog.h>
 #include <malloc.h>
 #include <asm/byteorder.h>
 #include <jffs2/jffs2.h>
 #include <nand.h>
 
+#include "legacy-mtd-utils.h"
+
 #if defined(CONFIG_CMD_MTDPARTS)
 
 /* partition handling routines */
 int mtdparts_init(void);
-int id_parse(const char *id, const char **ret_id, u8 *dev_type, u8 *dev_num);
 int find_dev_and_part(const char *id, struct mtd_device **dev,
 		      u8 *part_num, struct part_info **part);
 #endif
+
+#define MAX_NUM_PAGES 64
+
+static int nand_biterror(struct mtd_info *mtd, ulong off, int bit)
+{
+	int ret = 0;
+	int page = 0;
+	ulong  block_off;
+	u_char *datbuf[MAX_NUM_PAGES]; /* Data and OOB */
+	u_char data;
+	int pages_per_blk = mtd->erasesize / mtd->writesize;
+	struct erase_info einfo;
+
+	if (pages_per_blk > MAX_NUM_PAGES) {
+		printf("Too many pages in one erase block\n");
+		return 1;
+	}
+
+	if (bit < 0 || bit > 7) {
+		printf("bit position 0 to 7 is allowed\n");
+		return 1;
+	}
+
+	/* Allocate memory */
+	memset(datbuf, 0, sizeof(datbuf));
+	for (page = 0; page < pages_per_blk ; page++) {
+		datbuf[page] = malloc(mtd->writesize + mtd->oobsize);
+		if (!datbuf[page]) {
+			printf("No memory for page buffer\n");
+			ret = -ENOMEM;
+			goto free_memory;
+		}
+	}
+
+	/* Align to erase block boundary */
+	block_off = off & (~(mtd->erasesize - 1));
+
+	/* Read out memory as first step */
+	for (page = 0; page < pages_per_blk ; page++) {
+		struct mtd_oob_ops ops;
+		loff_t addr = (loff_t)block_off;
+
+		memset(&ops, 0, sizeof(ops));
+		ops.datbuf = datbuf[page];
+		ops.oobbuf = datbuf[page] + mtd->writesize;
+		ops.len = mtd->writesize;
+		ops.ooblen = mtd->oobsize;
+		ops.mode = MTD_OPS_RAW;
+		ret = mtd_read_oob(mtd, addr, &ops);
+		if (ret < 0) {
+			printf("Error (%d) reading page %08lx\n",
+			       ret, block_off);
+			ret = 1;
+			goto free_memory;
+		}
+		block_off += mtd->writesize;
+	}
+
+	/* Erase the block */
+	memset(&einfo, 0, sizeof(einfo));
+	einfo.mtd = mtd;
+	/* Align to erase block boundary */
+	einfo.addr = (loff_t)(off & (~(mtd->erasesize - 1)));
+	einfo.len = mtd->erasesize;
+	ret = mtd_erase(mtd, &einfo);
+	if (ret < 0) {
+		printf("Error (%d) nand_erase_nand page %08llx\n",
+		       ret, einfo.addr);
+		ret = 1;
+		goto free_memory;
+	}
+
+	/* Twist a bit in data part */
+	block_off = off & (mtd->erasesize - 1);
+	data = datbuf[block_off / mtd->writesize][block_off % mtd->writesize];
+	data ^= (1 << bit);
+	datbuf[block_off / mtd->writesize][block_off % mtd->writesize] = data;
+
+	printf("Flip data at 0x%lx with xor 0x%02x (bit=%d) to value=0x%02x\n",
+	       off, (1 << bit), bit, data);
+
+	/* Write back twisted data and unmodified OOB */
+	/* Align to erase block boundary */
+	block_off = off & (~(mtd->erasesize - 1));
+	for (page = 0; page < pages_per_blk; page++) {
+		struct mtd_oob_ops ops;
+		loff_t addr = (loff_t)block_off;
+
+		memset(&ops, 0, sizeof(ops));
+		ops.datbuf = datbuf[page];
+		ops.oobbuf = datbuf[page] + mtd->writesize;
+		ops.len = mtd->writesize;
+		ops.ooblen = mtd->oobsize;
+		ops.mode = MTD_OPS_RAW;
+		ret = mtd_write_oob(mtd, addr, &ops);
+		if (ret < 0) {
+			printf("Error (%d) write page %08lx\n", ret, block_off);
+			ret = 1;
+			goto free_memory;
+		}
+		block_off += mtd->writesize;
+	}
+
+free_memory:
+	for (page = 0; page < pages_per_blk ; page++) {
+		if (datbuf[page])
+			free(datbuf[page]);
+	}
+	return ret;
+}
 
 static int nand_dump(struct mtd_info *mtd, ulong off, int only_oob,
 		     int repeat)
@@ -115,21 +235,20 @@ free_dat:
 
 static int set_dev(int dev)
 {
-	if (dev < 0 || dev >= CONFIG_SYS_MAX_NAND_DEVICE ||
-	    !nand_info[dev]->name) {
-		puts("No such device\n");
-		return -1;
-	}
+	struct mtd_info *mtd = get_nand_dev_by_index(dev);
+
+	if (!mtd)
+		return -ENODEV;
 
 	if (nand_curr_device == dev)
 		return 0;
 
-	printf("Device %d: %s", dev, nand_info[dev]->name);
+	printf("Device %d: %s", dev, mtd->name);
 	puts("... is now current device\n");
 	nand_curr_device = dev;
 
 #ifdef CONFIG_SYS_NAND_SELECT_DEVICE
-	board_nand_select_device(nand_info[dev]->priv, dev);
+	board_nand_select_device(mtd_to_nand(mtd), dev);
 #endif
 
 	return 0;
@@ -185,14 +304,14 @@ static void do_nand_status(struct mtd_info *mtd)
 #ifdef CONFIG_ENV_OFFSET_OOB
 unsigned long nand_env_oob_offset;
 
-int do_nand_env_oob(cmd_tbl_t *cmdtp, int argc, char *const argv[])
+int do_nand_env_oob(struct cmd_tbl *cmdtp, int argc, char *const argv[])
 {
 	int ret;
 	uint32_t oob_buf[ENV_OFFSET_SIZE/sizeof(uint32_t)];
-	struct mtd_info *mtd = nand_info[0];
+	struct mtd_info *mtd = get_nand_dev_by_index(0);
 	char *cmd = argv[1];
 
-	if (CONFIG_SYS_MAX_NAND_DEVICE == 0 || !mtd->name) {
+	if (CONFIG_SYS_MAX_NAND_DEVICE == 0 || !mtd) {
 		puts("no devices available\n");
 		return 1;
 	}
@@ -214,9 +333,10 @@ int do_nand_env_oob(cmd_tbl_t *cmdtp, int argc, char *const argv[])
 		if (argc < 3)
 			goto usage;
 
+		mtd = get_nand_dev_by_index(idx);
 		/* We don't care about size, or maxsize. */
 		if (mtd_arg_off(argv[2], &idx, &addr, &maxsize, &maxsize,
-				MTD_DEV_TYPE_NAND, nand_info[idx]->size)) {
+				MTD_DEV_TYPE_NAND, mtd->size)) {
 			puts("Offset or partition name expected\n");
 			return 1;
 		}
@@ -284,29 +404,36 @@ usage:
 
 static void nand_print_and_set_info(int idx)
 {
-	struct mtd_info *mtd = nand_info[idx];
-	struct nand_chip *chip = mtd_to_nand(mtd);
+	struct mtd_info *mtd;
+	struct nand_chip *chip;
 
+	mtd = get_nand_dev_by_index(idx);
+	if (!mtd)
+		return;
+
+	chip = mtd_to_nand(mtd);
 	printf("Device %d: ", idx);
 	if (chip->numchips > 1)
 		printf("%dx ", chip->numchips);
 	printf("%s, sector size %u KiB\n",
 	       mtd->name, mtd->erasesize >> 10);
-	printf("  Page size   %8d b\n", mtd->writesize);
-	printf("  OOB size    %8d b\n", mtd->oobsize);
-	printf("  Erase size  %8d b\n", mtd->erasesize);
-	printf("  subpagesize %8d b\n", chip->subpagesize);
-	printf("  options     0x%8x\n", chip->options);
-	printf("  bbt options 0x%8x\n", chip->bbt_options);
+	printf("  Page size     %8d b\n", mtd->writesize);
+	printf("  OOB size      %8d b\n", mtd->oobsize);
+	printf("  Erase size    %8d b\n", mtd->erasesize);
+	printf("  ecc strength  %8d bits\n", mtd->ecc_strength);
+	printf("  ecc step size %8d b\n", mtd->ecc_step_size);
+	printf("  subpagesize   %8d b\n", chip->subpagesize);
+	printf("  options       0x%08x\n", chip->options);
+	printf("  bbt options   0x%08x\n", chip->bbt_options);
 
 	/* Set geometry info */
-	setenv_hex("nand_writesize", mtd->writesize);
-	setenv_hex("nand_oobsize", mtd->oobsize);
-	setenv_hex("nand_erasesize", mtd->erasesize);
+	env_set_hex("nand_writesize", mtd->writesize);
+	env_set_hex("nand_oobsize", mtd->oobsize);
+	env_set_hex("nand_erasesize", mtd->erasesize);
 }
 
 static int raw_access(struct mtd_info *mtd, ulong addr, loff_t off,
-		      ulong count, int read)
+		      ulong count, int read, int no_verify)
 {
 	int ret = 0;
 
@@ -324,7 +451,7 @@ static int raw_access(struct mtd_info *mtd, ulong addr, loff_t off,
 			ret = mtd_read_oob(mtd, off, &ops);
 		} else {
 			ret = mtd_write_oob(mtd, off, &ops);
-			if (!ret)
+			if (!ret && !no_verify)
 				ret = nand_verify_page_oob(mtd, &ops, off);
 		}
 
@@ -349,7 +476,7 @@ static void adjust_size_for_badblocks(loff_t *size, loff_t offset, int dev)
 	/* We grab the nand info object here fresh because this is usually
 	 * called after arg_off_size() which can change the value of dev.
 	 */
-	struct mtd_info *mtd = nand_info[dev];
+	struct mtd_info *mtd = get_nand_dev_by_index(dev);
 	loff_t maxoffset = offset + *size;
 	int badblocks = 0;
 
@@ -366,7 +493,8 @@ static void adjust_size_for_badblocks(loff_t *size, loff_t offset, int dev)
 	}
 }
 
-static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_nand(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	int i, ret = 0;
 	ulong addr;
@@ -378,7 +506,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 #else
 	int quiet = 0;
 #endif
-	const char *quiet_str = getenv("quiet");
+	const char *quiet_str = env_get("quiet");
 	int dev = nand_curr_device;
 	int repeat = flag & CMD_FLAG_REPEAT;
 
@@ -398,10 +526,8 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (strcmp(cmd, "info") == 0) {
 
 		putc('\n');
-		for (i = 0; i < CONFIG_SYS_MAX_NAND_DEVICE; i++) {
-			if (nand_info[i]->name)
-				nand_print_and_set_info(i);
-		}
+		for (i = 0; i < CONFIG_SYS_MAX_NAND_DEVICE; i++)
+			nand_print_and_set_info(i);
 		return 0;
 	}
 
@@ -415,7 +541,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			return 0;
 		}
 
-		dev = (int)simple_strtoul(argv[2], NULL, 10);
+		dev = (int)dectoul(argv[2], NULL);
 		set_dev(dev);
 
 		return 0;
@@ -433,18 +559,20 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	 * one before these commands can run, even if a partition specifier
 	 * for another device is to be used.
 	 */
-	if (dev < 0 || dev >= CONFIG_SYS_MAX_NAND_DEVICE ||
-	    !nand_info[dev]->name) {
+	mtd = get_nand_dev_by_index(dev);
+	if (!mtd) {
 		puts("\nno devices available\n");
 		return 1;
 	}
-	mtd = nand_info[dev];
 
 	if (strcmp(cmd, "bad") == 0) {
 		printf("\nDevice %d bad blocks:\n", dev);
-		for (off = 0; off < mtd->size; off += mtd->erasesize)
-			if (nand_block_isbad(mtd, off))
-				printf("  %08llx\n", (unsigned long long)off);
+		for (off = 0; off < mtd->size; off += mtd->erasesize) {
+			ret = nand_block_isbad(mtd, off);
+			if (ret)
+				printf("  0x%08llx%s\n", (unsigned long long)off,
+				       ret == 2 ? "\t (bbt reserved)" : "");
+		}
 		return 0;
 	}
 
@@ -497,13 +625,13 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		/* skip first two or three arguments, look for offset and size */
 		if (mtd_arg_off_size(argc - o, argv + o, &dev, &off, &size,
 				     &maxsize, MTD_DEV_TYPE_NAND,
-				     nand_info[dev]->size) != 0)
+				     mtd->size) != 0)
 			return 1;
 
 		if (set_dev(dev))
 			return 1;
 
-		mtd = nand_info[dev];
+		mtd = get_nand_dev_by_index(dev);
 
 		memset(&opts, 0, sizeof(opts));
 		opts.offset = off;
@@ -535,7 +663,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		if (argc < 3)
 			goto usage;
 
-		off = (int)simple_strtoul(argv[2], NULL, 16);
+		off = (int)hextoul(argv[2], NULL);
 		ret = nand_dump(mtd, off, !strcmp(&cmd[4], ".oob"), repeat);
 
 		return ret == 0 ? 1 : 0;
@@ -546,29 +674,33 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		ulong pagecount = 1;
 		int read;
 		int raw = 0;
+		int no_verify = 0;
 
 		if (argc < 4)
 			goto usage;
 
-		addr = (ulong)simple_strtoul(argv[2], NULL, 16);
+		addr = (ulong)hextoul(argv[2], NULL);
 
 		read = strncmp(cmd, "read", 4) == 0; /* 1 = read, 0 = write */
 		printf("\nNAND %s: ", read ? "read" : "write");
 
 		s = strchr(cmd, '.');
 
-		if (s && !strcmp(s, ".raw")) {
+		if (s && !strncmp(s, ".raw", 4)) {
 			raw = 1;
+
+			if (!strcmp(s, ".raw.noverify"))
+				no_verify = 1;
 
 			if (mtd_arg_off(argv[3], &dev, &off, &size, &maxsize,
 					MTD_DEV_TYPE_NAND,
-					nand_info[dev]->size))
+					mtd->size))
 				return 1;
 
 			if (set_dev(dev))
 				return 1;
 
-			mtd = nand_info[dev];
+			mtd = get_nand_dev_by_index(dev);
 
 			if (argc > 4 && !str2long(argv[4], &pagecount)) {
 				printf("'%s' is not a number\n", argv[4]);
@@ -585,7 +717,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			if (mtd_arg_off_size(argc - 3, argv + 3, &dev, &off,
 					     &size, &maxsize,
 					     MTD_DEV_TYPE_NAND,
-					     nand_info[dev]->size) != 0)
+					     mtd->size) != 0)
 				return 1;
 
 			if (set_dev(dev))
@@ -597,7 +729,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			rwsize = size;
 		}
 
-		mtd = nand_info[dev];
+		mtd = get_nand_dev_by_index(dev);
 
 		if (!s || !strcmp(s, ".jffs2") ||
 		    !strcmp(s, ".e") || !strcmp(s, ".i")) {
@@ -633,7 +765,8 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			else
 				ret = mtd_write_oob(mtd, off, &ops);
 		} else if (raw) {
-			ret = raw_access(mtd, addr, off, pagecount, read);
+			ret = raw_access(mtd, addr, off, pagecount, read,
+					 no_verify);
 		} else {
 			printf("Unknown nand command suffix '%s'.\n", s);
 			return 1;
@@ -700,7 +833,7 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 			goto usage;
 
 		while (argc > 0) {
-			addr = simple_strtoul(*argv, NULL, 16);
+			addr = hextoul(*argv, NULL);
 
 			if (mtd_block_markbad(mtd, addr)) {
 				printf("block 0x%08lx NOT marked "
@@ -719,8 +852,15 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	}
 
 	if (strcmp(cmd, "biterr") == 0) {
-		/* todo */
-		return 1;
+		int bit;
+
+		if (argc != 4)
+			goto usage;
+
+		off = (int)simple_strtoul(argv[2], NULL, 16);
+		bit = (int)simple_strtoul(argv[3], NULL, 10);
+		ret = nand_biterror(mtd, off, bit);
+		return ret;
 	}
 
 #ifdef CONFIG_CMD_NAND_LOCK_UNLOCK
@@ -756,13 +896,15 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 
 		if (mtd_arg_off_size(argc - 2, argv + 2, &dev, &off, &size,
 				     &maxsize, MTD_DEV_TYPE_NAND,
-				     nand_info[dev]->size) < 0)
+				     mtd->size) < 0)
 			return 1;
 
 		if (set_dev(dev))
 			return 1;
 
-		if (!nand_unlock(nand_info[dev], off, size, allexcept)) {
+		mtd = get_nand_dev_by_index(dev);
+
+		if (!nand_unlock(mtd, off, size, allexcept)) {
 			puts("NAND flash successfully unlocked\n");
 		} else {
 			puts("Error unlocking NAND flash, "
@@ -786,7 +928,7 @@ static char nand_help_text[] =
 	"    read/write 'size' bytes starting at offset 'off'\n"
 	"    to/from memory address 'addr', skipping bad blocks.\n"
 	"nand read.raw - addr off|partition [count]\n"
-	"nand write.raw - addr off|partition [count]\n"
+	"nand write.raw[.noverify] - addr off|partition [count]\n"
 	"    Use read.raw/write.raw to avoid ECC and access the flash as-is.\n"
 #ifdef CONFIG_CMD_NAND_TRIMFFS
 	"nand write.trimffs - addr off|partition size\n"
@@ -809,7 +951,7 @@ static char nand_help_text[] =
 	"nand scrub [-y] off size | scrub.part partition | scrub.chip\n"
 	"    really clean NAND erasing bad blocks (UNSAFE)\n"
 	"nand markbad off [...] - mark bad block(s) at offset (UNSAFE)\n"
-	"nand biterr off - make a bit error at offset (UNSAFE)"
+	"nand biterr off bit - make a bit error at offset and bit position (UNSAFE)"
 #ifdef CONFIG_CMD_NAND_LOCK_UNLOCK
 	"\n"
 	"nand lock [tight] [status]\n"
@@ -831,14 +973,14 @@ U_BOOT_CMD(
 	"NAND sub-system", nand_help_text
 );
 
-static int nand_load_image(cmd_tbl_t *cmdtp, struct mtd_info *mtd,
+static int nand_load_image(struct cmd_tbl *cmdtp, struct mtd_info *mtd,
 			   ulong offset, ulong addr, char *cmd)
 {
 	int r;
 	char *s;
 	size_t cnt;
-#if defined(CONFIG_IMAGE_FORMAT_LEGACY)
-	image_header_t *hdr;
+#if defined(CONFIG_LEGACY_IMAGE_FORMAT)
+	struct legacy_img_hdr *hdr;
 #endif
 #if defined(CONFIG_FIT)
 	const void *fit_hdr = NULL;
@@ -865,9 +1007,9 @@ static int nand_load_image(cmd_tbl_t *cmdtp, struct mtd_info *mtd,
 	bootstage_mark(BOOTSTAGE_ID_NAND_HDR_READ);
 
 	switch (genimg_get_format ((void *)addr)) {
-#if defined(CONFIG_IMAGE_FORMAT_LEGACY)
+#if defined(CONFIG_LEGACY_IMAGE_FORMAT)
 	case IMAGE_FORMAT_LEGACY:
-		hdr = (image_header_t *)addr;
+		hdr = (struct legacy_img_hdr *)addr;
 
 		bootstage_mark(BOOTSTAGE_ID_NAND_TYPE);
 		image_print_contents (hdr);
@@ -902,7 +1044,7 @@ static int nand_load_image(cmd_tbl_t *cmdtp, struct mtd_info *mtd,
 #if defined(CONFIG_FIT)
 	/* This cannot be done earlier, we need complete FIT image in RAM first */
 	if (genimg_get_format ((void *)addr) == IMAGE_FORMAT_FIT) {
-		if (!fit_check_format (fit_hdr)) {
+		if (fit_check_format(fit_hdr, IMAGE_SIZE_INVAL)) {
 			bootstage_error(BOOTSTAGE_ID_NAND_FIT_READ);
 			puts ("** Bad FIT image format\n");
 			return 1;
@@ -914,17 +1056,18 @@ static int nand_load_image(cmd_tbl_t *cmdtp, struct mtd_info *mtd,
 
 	/* Loading ok, update default load address */
 
-	load_addr = addr;
+	image_load_addr = addr;
 
 	return bootm_maybe_autostart(cmdtp, cmd);
 }
 
-static int do_nandboot(cmd_tbl_t *cmdtp, int flag, int argc,
-		       char * const argv[])
+static int do_nandboot(struct cmd_tbl *cmdtp, int flag, int argc,
+		       char *const argv[])
 {
 	char *boot_device = NULL;
 	int idx;
 	ulong addr, offset = 0;
+	struct mtd_info *mtd;
 #if defined(CONFIG_CMD_MTDPARTS)
 	struct mtd_device *dev;
 	struct part_info *part;
@@ -941,11 +1084,13 @@ static int do_nandboot(cmd_tbl_t *cmdtp, int flag, int argc,
 			if (argc > 3)
 				goto usage;
 			if (argc == 3)
-				addr = simple_strtoul(argv[1], NULL, 16);
+				addr = hextoul(argv[1], NULL);
 			else
 				addr = CONFIG_SYS_LOAD_ADDR;
-			return nand_load_image(cmdtp, nand_info[dev->id->num],
-					       part->offset, addr, argv[0]);
+
+			mtd = get_nand_dev_by_index(dev->id->num);
+			return nand_load_image(cmdtp, mtd, part->offset,
+					       addr, argv[0]);
 		}
 	}
 #endif
@@ -954,20 +1099,20 @@ static int do_nandboot(cmd_tbl_t *cmdtp, int flag, int argc,
 	switch (argc) {
 	case 1:
 		addr = CONFIG_SYS_LOAD_ADDR;
-		boot_device = getenv("bootdevice");
+		boot_device = env_get("bootdevice");
 		break;
 	case 2:
-		addr = simple_strtoul(argv[1], NULL, 16);
-		boot_device = getenv("bootdevice");
+		addr = hextoul(argv[1], NULL);
+		boot_device = env_get("bootdevice");
 		break;
 	case 3:
-		addr = simple_strtoul(argv[1], NULL, 16);
+		addr = hextoul(argv[1], NULL);
 		boot_device = argv[2];
 		break;
 	case 4:
-		addr = simple_strtoul(argv[1], NULL, 16);
+		addr = hextoul(argv[1], NULL);
 		boot_device = argv[2];
-		offset = simple_strtoul(argv[3], NULL, 16);
+		offset = hextoul(argv[3], NULL);
 		break;
 	default:
 #if defined(CONFIG_CMD_MTDPARTS)
@@ -985,16 +1130,17 @@ usage:
 	}
 	bootstage_mark(BOOTSTAGE_ID_NAND_BOOT_DEVICE);
 
-	idx = simple_strtoul(boot_device, NULL, 16);
+	idx = hextoul(boot_device, NULL);
 
-	if (idx < 0 || idx >= CONFIG_SYS_MAX_NAND_DEVICE || !nand_info[idx]->name) {
+	mtd = get_nand_dev_by_index(idx);
+	if (!mtd) {
 		printf("\n** Device %d not available\n", idx);
 		bootstage_error(BOOTSTAGE_ID_NAND_AVAILABLE);
 		return 1;
 	}
 	bootstage_mark(BOOTSTAGE_ID_NAND_AVAILABLE);
 
-	return nand_load_image(cmdtp, nand_info[idx], offset, addr, argv[0]);
+	return nand_load_image(cmdtp, mtd, offset, addr, argv[0]);
 }
 
 U_BOOT_CMD(nboot, 4, 1, do_nandboot,

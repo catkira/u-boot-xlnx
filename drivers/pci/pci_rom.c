@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2014 Google, Inc
  *
@@ -19,34 +20,45 @@
  * David Mosberger-Tang
  *
  * Copyright 1997 -- 1999 Martin Mares <mj@atrey.karlin.mff.cuni.cz>
-
- * SPDX-License-Identifier:	GPL-2.0
  */
+
+#define LOG_CATEGORY UCLASS_PCI
 
 #include <common.h>
 #include <bios_emul.h>
+#include <bootstage.h>
 #include <dm.h>
 #include <errno.h>
+#include <init.h>
+#include <log.h>
 #include <malloc.h>
 #include <pci.h>
 #include <pci_rom.h>
-#include <vbe.h>
-#include <video_fb.h>
+#include <vesa.h>
+#include <video.h>
+#include <acpi/acpi_s3.h>
+#include <asm/global_data.h>
 #include <linux/screen_info.h>
+
+DECLARE_GLOBAL_DATA_PTR;
 
 __weak bool board_should_run_oprom(struct udevice *dev)
 {
+#if defined(CONFIG_X86) && defined(CONFIG_HAVE_ACPI_RESUME)
+	if (gd->arch.prev_sleep_state == ACPI_S3) {
+		if (IS_ENABLED(CONFIG_S3_VGA_ROM_RUN))
+			return true;
+		else
+			return false;
+	}
+#endif
+
 	return true;
 }
 
-static bool should_load_oprom(struct udevice *dev)
+__weak bool board_should_load_oprom(struct udevice *dev)
 {
-	if (IS_ENABLED(CONFIG_ALWAYS_LOAD_OPROM))
-		return 1;
-	if (board_should_run_oprom(dev))
-		return 1;
-
-	return 0;
+	return true;
 }
 
 __weak uint32_t board_map_oprom_vendev(uint32_t vendev)
@@ -56,7 +68,7 @@ __weak uint32_t board_map_oprom_vendev(uint32_t vendev)
 
 static int pci_rom_probe(struct udevice *dev, struct pci_rom_header **hdrp)
 {
-	struct pci_child_platdata *pplat = dev_get_parent_platdata(dev);
+	struct pci_child_plat *pplat = dev_get_parent_plat(dev);
 	struct pci_rom_header *rom_header;
 	struct pci_rom_data *rom_data;
 	u16 rom_vendor, rom_device;
@@ -136,7 +148,7 @@ static int pci_rom_probe(struct udevice *dev, struct pci_rom_header **hdrp)
  * @ram_headerp:	Returns a pointer to the image in RAM
  * @allocedp:		Returns true if @ram_headerp was allocated and needs
  *			to be freed
- * @return 0 if OK, -ve on error. Note that @allocedp is set up regardless of
+ * Return: 0 if OK, -ve on error. Note that @allocedp is set up regardless of
  * the error state. Even if this function returns an error, it may have
  * allocated memory.
  */
@@ -190,48 +202,7 @@ static int pci_rom_load(struct pci_rom_header *rom_header,
 	return 0;
 }
 
-struct vbe_mode_info mode_info;
-
-int vbe_get_video_info(struct graphic_device *gdev)
-{
-#ifdef CONFIG_FRAMEBUFFER_SET_VESA_MODE
-	struct vesa_mode_info *vesa = &mode_info.vesa;
-
-	gdev->winSizeX = vesa->x_resolution;
-	gdev->winSizeY = vesa->y_resolution;
-
-	gdev->plnSizeX = vesa->x_resolution;
-	gdev->plnSizeY = vesa->y_resolution;
-
-	gdev->gdfBytesPP = vesa->bits_per_pixel / 8;
-
-	switch (vesa->bits_per_pixel) {
-	case 32:
-	case 24:
-		gdev->gdfIndex = GDF_32BIT_X888RGB;
-		break;
-	case 16:
-		gdev->gdfIndex = GDF_16BIT_565RGB;
-		break;
-	default:
-		gdev->gdfIndex = GDF__8BIT_INDEX;
-		break;
-	}
-
-	gdev->isaBase = CONFIG_SYS_ISA_IO_BASE_ADDRESS;
-	gdev->pciBase = vesa->phys_base_ptr;
-
-	gdev->frameAdrs = vesa->phys_base_ptr;
-	gdev->memSize = vesa->bytes_per_scanline * vesa->y_resolution;
-
-	gdev->vprBase = vesa->phys_base_ptr;
-	gdev->cprBase = vesa->phys_base_ptr;
-
-	return gdev->winSizeX ? 0 : -ENOSYS;
-#else
-	return -ENOSYS;
-#endif
-}
+struct vesa_state mode_info;
 
 void setup_video(struct screen_info *screen_info)
 {
@@ -265,7 +236,7 @@ void setup_video(struct screen_info *screen_info)
 int dm_pci_run_vga_bios(struct udevice *dev, int (*int15_handler)(void),
 			int exec_method)
 {
-	struct pci_child_platdata *pplat = dev_get_parent_platdata(dev);
+	struct pci_child_plat *pplat = dev_get_parent_plat(dev);
 	struct pci_rom_header *rom = NULL, *ram = NULL;
 	int vesa_mode = -1;
 	bool emulate, alloced;
@@ -278,8 +249,8 @@ int dm_pci_run_vga_bios(struct udevice *dev, int (*int15_handler)(void),
 		return -ENODEV;
 	}
 
-	if (!should_load_oprom(dev))
-		return -ENXIO;
+	if (!board_should_load_oprom(dev))
+		return log_msg_ret("Should not load OPROM", -ENXIO);
 
 	ret = pci_rom_probe(dev, &rom);
 	if (ret)
@@ -338,7 +309,7 @@ int dm_pci_run_vga_bios(struct udevice *dev, int (*int15_handler)(void),
 			goto err;
 #endif
 	} else {
-#ifdef CONFIG_X86
+#if defined(CONFIG_X86) && (CONFIG_IS_ENABLED(X86_32BIT_INIT) || CONFIG_TPL)
 		bios_set_interrupt_handler(0x15, int15_handler);
 
 		bios_run_on_x86(dev, (unsigned long)ram, vesa_mode,
@@ -352,4 +323,77 @@ err:
 	if (alloced)
 		free(ram);
 	return ret;
+}
+
+int vesa_setup_video_priv(struct vesa_mode_info *vesa,
+			  struct video_priv *uc_priv,
+			  struct video_uc_plat *plat)
+{
+	if (!vesa->x_resolution)
+		return log_msg_ret("No x resolution", -ENXIO);
+	uc_priv->xsize = vesa->x_resolution;
+	uc_priv->ysize = vesa->y_resolution;
+	uc_priv->line_length = vesa->bytes_per_scanline;
+	switch (vesa->bits_per_pixel) {
+	case 32:
+	case 24:
+		uc_priv->bpix = VIDEO_BPP32;
+		break;
+	case 16:
+		uc_priv->bpix = VIDEO_BPP16;
+		break;
+	default:
+		return -EPROTONOSUPPORT;
+	}
+
+	/* Use double buffering if enabled */
+	if (IS_ENABLED(CONFIG_VIDEO_COPY) && plat->base)
+		plat->copy_base = vesa->phys_base_ptr;
+	else
+		plat->base = vesa->phys_base_ptr;
+	log_debug("base = %lx, copy_base = %lx\n", plat->base, plat->copy_base);
+	plat->size = vesa->bytes_per_scanline * vesa->y_resolution;
+
+	return 0;
+}
+
+int vesa_setup_video(struct udevice *dev, int (*int15_handler)(void))
+{
+	struct video_uc_plat *plat = dev_get_uclass_plat(dev);
+	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
+	int ret;
+
+	/* If we are running from EFI or coreboot, this can't work */
+	if (!ll_boot_init()) {
+		printf("Not available (previous bootloader prevents it)\n");
+		return -EPERM;
+	}
+	bootstage_start(BOOTSTAGE_ID_ACCUM_LCD, "vesa display");
+	ret = dm_pci_run_vga_bios(dev, int15_handler, PCI_ROM_USE_NATIVE |
+					PCI_ROM_ALLOW_FALLBACK);
+	bootstage_accum(BOOTSTAGE_ID_ACCUM_LCD);
+	if (ret) {
+		debug("failed to run video BIOS: %d\n", ret);
+		return ret;
+	}
+
+	ret = vesa_setup_video_priv(&mode_info.vesa, uc_priv, plat);
+	if (ret) {
+		if (ret == -ENFILE) {
+			/*
+			 * See video-uclass.c for how to set up reserved memory
+			 * in your video driver
+			 */
+			log_err("CONFIG_VIDEO_COPY enabled but driver '%s' set up no reserved memory\n",
+				dev->driver->name);
+		}
+
+		debug("No video mode configured\n");
+		return ret;
+	}
+
+	printf("Video: %dx%dx%d\n", uc_priv->xsize, uc_priv->ysize,
+	       mode_info.vesa.bits_per_pixel);
+
+	return 0;
 }

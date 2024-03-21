@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2013 Gerhard Sittig <gsi@denx.de>
  * based on the U-Boot Asix driver as well as information
  * from the Linux Moschip driver
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -13,6 +12,9 @@
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <log.h>
+#include <net.h>
+#include <linux/delay.h>
 #include <linux/mii.h>
 #include <malloc.h>
 #include <memalign.h>
@@ -418,25 +420,25 @@ static int mcs7830_basic_reset(struct usb_device *udev,
 
 	rc = mcs7830_set_autoneg(udev);
 	if (rc < 0) {
-		error("setting autoneg failed\n");
+		pr_err("setting autoneg failed\n");
 		return rc;
 	}
 
 	rc = mcs7830_write_mchash(udev, priv);
 	if (rc < 0) {
-		error("failed to set multicast hash\n");
+		pr_err("failed to set multicast hash\n");
 		return rc;
 	}
 
 	rc = mcs7830_write_config(udev, priv);
 	if (rc < 0) {
-		error("failed to set configuration\n");
+		pr_err("failed to set configuration\n");
 		return rc;
 	}
 
 	rc = mcs7830_apply_fixup(udev);
 	if (rc < 0) {
-		error("fixup application failed\n");
+		pr_err("fixup application failed\n");
 		return rc;
 	}
 
@@ -541,11 +543,11 @@ static int mcs7830_recv_common(struct ueth_data *ueth, uint8_t *buf)
 	debug("%s() RX want len %d, got len %d, rc %d\n",
 	      __func__, wantlen, gotlen, rc);
 	if (rc != 0) {
-		error("RX: failed to receive\n");
+		pr_err("RX: failed to receive\n");
 		return rc;
 	}
 	if (gotlen > wantlen) {
-		error("RX: got too many bytes (%d)\n", gotlen);
+		pr_err("RX: got too many bytes (%d)\n", gotlen);
 		return -EIO;
 	}
 
@@ -584,7 +586,7 @@ static int mcs7830_recv_common(struct ueth_data *ueth, uint8_t *buf)
  * ensures that the link is up and subsequent send() and recv() calls can
  * exchange ethernet frames
  */
-static int mcs7830_init(struct eth_device *eth, bd_t *bd)
+static int mcs7830_init(struct eth_device *eth, struct bd_info *bd)
 {
 	struct ueth_data *dev = eth->priv;
 
@@ -622,10 +624,12 @@ static int mcs7830_recv(struct eth_device *eth)
 	int len;
 
 	len = mcs7830_recv_common(ueth, buf);
-	if (len <= 0)
+	if (len >= 0) {
 		net_process_received_packet(buf, len);
+		return 0;
+	}
 
-	return 0;
+	return len;
 }
 
 /*
@@ -889,7 +893,7 @@ static int mcs7830_free_pkt(struct udevice *dev, uchar *packet, int packet_len)
 int mcs7830_write_hwaddr(struct udevice *dev)
 {
 	struct usb_device *udev = dev_get_parent_priv(dev);
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 
 	return mcs7830_write_mac_common(udev, pdata->enetaddr);
 }
@@ -898,7 +902,7 @@ static int mcs7830_eth_probe(struct udevice *dev)
 {
 	struct usb_device *udev = dev_get_parent_priv(dev);
 	struct mcs7830_private *priv = dev_get_priv(dev);
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 	struct ueth_data *ueth = &priv->ueth;
 
 	if (mcs7830_basic_reset(udev, priv))
@@ -924,8 +928,8 @@ U_BOOT_DRIVER(mcs7830_eth) = {
 	.id	= UCLASS_ETH,
 	.probe = mcs7830_eth_probe,
 	.ops	= &mcs7830_eth_ops,
-	.priv_auto_alloc_size = sizeof(struct mcs7830_private),
-	.platdata_auto_alloc_size = sizeof(struct eth_pdata),
+	.priv_auto	= sizeof(struct mcs7830_private),
+	.plat_auto	= sizeof(struct eth_pdata),
 	.flags	= DM_FLAG_ALLOC_PRIV_DMA,
 };
 

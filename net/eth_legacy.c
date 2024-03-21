@@ -1,17 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2001-2015
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  * Joe Hershberger, National Instruments
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <bootstage.h>
 #include <command.h>
-#include <environment.h>
+#include <dm.h>
+#include <env.h>
+#include <log.h>
 #include <net.h>
 #include <phy.h>
-#include <asm/errno.h>
+#include <asm/global_data.h>
+#include <linux/bug.h>
+#include <linux/errno.h>
+#include <net/pcap.h>
 #include "eth_internal.h"
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -20,12 +25,12 @@ DECLARE_GLOBAL_DATA_PTR;
  * CPU and board-specific Ethernet initializations.  Aliased function
  * signals caller to move on
  */
-static int __def_eth_init(bd_t *bis)
+static int __def_eth_init(struct bd_info *bis)
 {
 	return -1;
 }
-int cpu_eth_init(bd_t *bis) __attribute__((weak, alias("__def_eth_init")));
-int board_eth_init(bd_t *bis) __attribute__((weak, alias("__def_eth_init")));
+int cpu_eth_init(struct bd_info *bis) __attribute__((weak, alias("__def_eth_init")));
+int board_eth_init(struct bd_info *bis) __attribute__((weak, alias("__def_eth_init")));
 
 #ifdef CONFIG_API
 static struct {
@@ -109,7 +114,7 @@ static int on_ethaddr(const char *name, const char *value, enum env_op op,
 		return 0;
 
 	/* look for an index after "eth" */
-	index = simple_strtoul(name + 3, NULL, 10);
+	index = dectoul(name + 3, NULL);
 
 	dev = eth_devices;
 	do {
@@ -117,10 +122,11 @@ static int on_ethaddr(const char *name, const char *value, enum env_op op,
 			switch (op) {
 			case env_op_create:
 			case env_op_overwrite:
-				eth_parse_enetaddr(value, dev->enetaddr);
+				string_to_enetaddr(value, dev->enetaddr);
+				eth_write_hwaddr(dev, "eth", dev->index);
 				break;
 			case env_op_delete:
-				memset(dev->enetaddr, 0, 6);
+				memset(dev->enetaddr, 0, ARP_HLEN);
 			}
 		}
 		dev = dev->next;
@@ -133,14 +139,14 @@ U_BOOT_ENV_CALLBACK(ethaddr, on_ethaddr);
 int eth_write_hwaddr(struct eth_device *dev, const char *base_name,
 		   int eth_number)
 {
-	unsigned char env_enetaddr[6];
+	unsigned char env_enetaddr[ARP_HLEN];
 	int ret = 0;
 
-	eth_getenv_enetaddr_by_index(base_name, eth_number, env_enetaddr);
+	eth_env_get_enetaddr_by_index(base_name, eth_number, env_enetaddr);
 
 	if (!is_zero_ethaddr(env_enetaddr)) {
 		if (!is_zero_ethaddr(dev->enetaddr) &&
-		    memcmp(dev->enetaddr, env_enetaddr, 6)) {
+		    memcmp(dev->enetaddr, env_enetaddr, ARP_HLEN)) {
 			printf("\nWarning: %s MAC addresses don't match:\n",
 			       dev->name);
 			printf("Address in SROM is         %pM\n",
@@ -149,15 +155,17 @@ int eth_write_hwaddr(struct eth_device *dev, const char *base_name,
 			       env_enetaddr);
 		}
 
-		memcpy(dev->enetaddr, env_enetaddr, 6);
+		memcpy(dev->enetaddr, env_enetaddr, ARP_HLEN);
 	} else if (is_valid_ethaddr(dev->enetaddr)) {
-		eth_setenv_enetaddr_by_index(base_name, eth_number,
-					     dev->enetaddr);
+		eth_env_set_enetaddr_by_index(base_name, eth_number,
+					      dev->enetaddr);
 	} else if (is_zero_ethaddr(dev->enetaddr)) {
 #ifdef CONFIG_NET_RANDOM_ETHADDR
 		net_random_ethaddr(dev->enetaddr);
 		printf("\nWarning: %s (eth%d) using random MAC address - %pM\n",
 		       dev->name, eth_number, dev->enetaddr);
+		eth_env_set_enetaddr_by_index("eth", eth_number,
+					      dev->enetaddr);
 #else
 		printf("\nError: %s address not set.\n",
 		       dev->name);
@@ -256,11 +264,11 @@ int eth_initialize(void)
 	}
 
 	if (!eth_devices) {
-		puts("No ethernet found.\n");
+		log_err("No ethernet found.\n");
 		bootstage_error(BOOTSTAGE_ID_NET_ETH_START);
 	} else {
 		struct eth_device *dev = eth_devices;
-		char *ethprime = getenv("ethprime");
+		char *ethprime = env_get("ethprime");
 
 		bootstage_mark(BOOTSTAGE_ID_NET_ETH_INIT);
 		do {
@@ -291,14 +299,13 @@ int eth_initialize(void)
 	return num_devices;
 }
 
-#ifdef CONFIG_MCAST_TFTP
 /* Multicast.
  * mcast_addr: multicast ipaddr from which multicast Mac is made
  * join: 1=join, 0=leave.
  */
 int eth_mcast_join(struct in_addr mcast_ip, int join)
 {
-	u8 mcast_mac[6];
+	u8 mcast_mac[ARP_HLEN];
 	if (!eth_current || !eth_current->mcast)
 		return -1;
 	mcast_mac[5] = htonl(mcast_ip.s_addr) & 0xff;
@@ -310,39 +317,12 @@ int eth_mcast_join(struct in_addr mcast_ip, int join)
 	return eth_current->mcast(eth_current, mcast_mac, join);
 }
 
-/* the 'way' for ethernet-CRC-32. Spliced in from Linux lib/crc32.c
- * and this is the ethernet-crc method needed for TSEC -- and perhaps
- * some other adapter -- hash tables
- */
-#define CRCPOLY_LE 0xedb88320
-u32 ether_crc(size_t len, unsigned char const *p)
-{
-	int i;
-	u32 crc;
-	crc = ~0;
-	while (len--) {
-		crc ^= *p++;
-		for (i = 0; i < 8; i++)
-			crc = (crc >> 1) ^ ((crc & 1) ? CRCPOLY_LE : 0);
-	}
-	/* an reverse the bits, cuz of way they arrive -- last-first */
-	crc = (crc >> 16) | (crc << 16);
-	crc = (crc >> 8 & 0x00ff00ff) | (crc << 8 & 0xff00ff00);
-	crc = (crc >> 4 & 0x0f0f0f0f) | (crc << 4 & 0xf0f0f0f0);
-	crc = (crc >> 2 & 0x33333333) | (crc << 2 & 0xcccccccc);
-	crc = (crc >> 1 & 0x55555555) | (crc << 1 & 0xaaaaaaaa);
-	return crc;
-}
-
-#endif
-
-
 int eth_init(void)
 {
 	struct eth_device *old_current;
 
 	if (!eth_current) {
-		puts("No ethernet found.\n");
+		log_err("No ethernet found.\n");
 		return -ENODEV;
 	}
 
@@ -380,10 +360,17 @@ int eth_is_active(struct eth_device *dev)
 
 int eth_send(void *packet, int length)
 {
+	int ret;
+
 	if (!eth_current)
 		return -ENODEV;
 
-	return eth_current->send(eth_current, packet, length);
+	ret = eth_current->send(eth_current, packet, length);
+#if defined(CONFIG_CMD_PCAP)
+	if (ret >= 0)
+		pcap_post(packet, length, true);
+#endif
+	return ret;
 }
 
 int eth_rx(void)

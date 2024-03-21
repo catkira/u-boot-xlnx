@@ -1,19 +1,19 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2010-2012, NVIDIA CORPORATION.  All rights reserved.
  *
  * See file CREDITS for list of people who contributed to this
  * project.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
+#include <log.h>
 #include <asm/io.h>
 #include <asm/arch/tegra.h>
 #include <asm/arch/pinmux.h>
 #include <asm/gpio.h>
 
-#ifdef CONFIG_TEGRA_MMC
+#ifdef CONFIG_MMC_SDHCI_TEGRA
 /*
  * Routine: pin_mux_mmc
  * Description: setup the pin muxes/tristate values for the SDMMC(s)
@@ -41,7 +41,7 @@ void pin_mux_mmc(void)
 }
 #endif
 
-#ifdef CONFIG_DM_VIDEO
+#ifdef CONFIG_VIDEO
 /* this is a weak define that we are overriding */
 void pin_mux_display(void)
 {

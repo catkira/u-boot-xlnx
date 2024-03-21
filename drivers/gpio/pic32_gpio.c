@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2015 Microchip Technology Inc
  * Purna Chandra Mandal <purna.mandal@microchip.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
 #include <malloc.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/gpio.h>
+#include <linux/bitops.h>
 #include <linux/compat.h>
 #include <mach/pic32.h>
 
@@ -133,7 +134,8 @@ static int pic32_gpio_probe(struct udevice *dev)
 	char *end;
 	int bank;
 
-	addr = fdtdec_get_addr_size(gd->fdt_blob, dev->of_offset, "reg", &size);
+	addr = fdtdec_get_addr_size(gd->fdt_blob, dev_of_offset(dev), "reg",
+				    &size);
 	if (addr == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
@@ -160,5 +162,5 @@ U_BOOT_DRIVER(gpio_pic32) = {
 	.of_match	= pic32_gpio_ids,
 	.ops		= &gpio_pic32_ops,
 	.probe		= pic32_gpio_probe,
-	.priv_auto_alloc_size	= sizeof(struct pic32_gpio_priv),
+	.priv_auto	= sizeof(struct pic32_gpio_priv),
 };

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * dfu_nand.c -- DFU for NAND routines.
  *
@@ -6,11 +7,10 @@
  * Based on dfu_mmc.c which is:
  * Copyright (C) 2012 Samsung Electronics
  * author: Lukasz Majewski <l.majewski@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <log.h>
 #include <malloc.h>
 #include <errno.h>
 #include <div64.h>
@@ -37,20 +37,21 @@ static int nand_block_op(enum dfu_op op, struct dfu_entity *dfu,
 	lim = dfu->data.nand.start + dfu->data.nand.size - start;
 	count = *len;
 
+	mtd = get_nand_dev_by_index(nand_curr_device);
+
 	if (nand_curr_device < 0 ||
 	    nand_curr_device >= CONFIG_SYS_MAX_NAND_DEVICE ||
-	    !nand_info[nand_curr_device]->name) {
+	    !mtd) {
 		printf("%s: invalid nand device\n", __func__);
 		return -1;
 	}
-
-	mtd = nand_info[nand_curr_device];
 
 	if (op == DFU_OP_READ) {
 		ret = nand_read_skip_bad(mtd, start, &count, &actual,
 					 lim, buf);
 	} else {
 		nand_erase_options_t opts;
+		int write_flags = WITH_WR_VERIFY;
 
 		memset(&opts, 0, sizeof(opts));
 		opts.offset = start;
@@ -63,8 +64,12 @@ static int nand_block_op(enum dfu_op op, struct dfu_entity *dfu,
 		if (ret)
 			return ret;
 		/* then write */
+#ifdef CONFIG_DFU_NAND_TRIMFFS
+		if (dfu->data.nand.ubi)
+			write_flags |= WITH_DROP_FFS;
+#endif
 		ret = nand_write_skip_bad(mtd, start, &count, &actual,
-					  lim, buf, WITH_WR_VERIFY);
+					  lim, buf, write_flags);
 	}
 
 	if (ret != 0) {
@@ -114,9 +119,11 @@ static int dfu_write_medium_nand(struct dfu_entity *dfu,
 	return ret;
 }
 
-long dfu_get_medium_size_nand(struct dfu_entity *dfu)
+int dfu_get_medium_size_nand(struct dfu_entity *dfu, u64 *size)
 {
-	return dfu->data.nand.size;
+	*size = dfu->data.nand.size;
+
+	return 0;
 }
 
 static int dfu_read_medium_nand(struct dfu_entity *dfu, u64 offset, void *buf,
@@ -143,17 +150,15 @@ static int dfu_flush_medium_nand(struct dfu_entity *dfu)
 
 	/* in case of ubi partition, erase rest of the partition */
 	if (dfu->data.nand.ubi) {
-		struct mtd_info *mtd;
+		struct mtd_info *mtd = get_nand_dev_by_index(nand_curr_device);
 		nand_erase_options_t opts;
 
 		if (nand_curr_device < 0 ||
 		    nand_curr_device >= CONFIG_SYS_MAX_NAND_DEVICE ||
-		    !nand_info[nand_curr_device]->name) {
+		    !mtd) {
 			printf("%s: invalid nand device\n", __func__);
 			return -1;
 		}
-
-		mtd = nand_info[nand_curr_device];
 
 		memset(&opts, 0, sizeof(opts));
 		off = dfu->offset;
@@ -189,20 +194,25 @@ unsigned int dfu_polltimeout_nand(struct dfu_entity *dfu)
 	return DFU_DEFAULT_POLL_TIMEOUT;
 }
 
-int dfu_fill_entity_nand(struct dfu_entity *dfu, char *devstr, char *s)
+int dfu_fill_entity_nand(struct dfu_entity *dfu, char *devstr, char **argv, int argc)
 {
-	char *st;
+	char *s;
 	int ret, dev, part;
 
 	dfu->data.nand.ubi = 0;
 	dfu->dev_type = DFU_DEV_NAND;
-	st = strsep(&s, " ");
-	if (!strcmp(st, "raw")) {
+	if (argc != 3)
+		return -EINVAL;
+
+	if (!strcmp(argv[0], "raw")) {
 		dfu->layout = DFU_RAW_ADDR;
-		dfu->data.nand.start = simple_strtoul(s, &s, 16);
-		s++;
-		dfu->data.nand.size = simple_strtoul(s, &s, 16);
-	} else if ((!strcmp(st, "part")) || (!strcmp(st, "partubi"))) {
+		dfu->data.nand.start = hextoul(argv[1], &s);
+		if (*s)
+			return -EINVAL;
+		dfu->data.nand.size = hextoul(argv[2], &s);
+		if (*s)
+			return -EINVAL;
+	} else if ((!strcmp(argv[0], "part")) || (!strcmp(argv[0], "partubi"))) {
 		char mtd_id[32];
 		struct mtd_device *mtd_dev;
 		u8 part_num;
@@ -210,12 +220,15 @@ int dfu_fill_entity_nand(struct dfu_entity *dfu, char *devstr, char *s)
 
 		dfu->layout = DFU_RAW_ADDR;
 
-		dev = simple_strtoul(s, &s, 10);
-		s++;
-		part = simple_strtoul(s, &s, 10);
+		dev = dectoul(argv[1], &s);
+		if (*s)
+			return -EINVAL;
+		part = dectoul(argv[2], &s);
+		if (*s)
+			return -EINVAL;
 
 		sprintf(mtd_id, "%s%d,%d", "nand", dev, part - 1);
-		printf("using id '%s'\n", mtd_id);
+		debug("using id '%s'\n", mtd_id);
 
 		mtdparts_init();
 
@@ -227,10 +240,10 @@ int dfu_fill_entity_nand(struct dfu_entity *dfu, char *devstr, char *s)
 
 		dfu->data.nand.start = pi->offset;
 		dfu->data.nand.size = pi->size;
-		if (!strcmp(st, "partubi"))
+		if (!strcmp(argv[0], "partubi"))
 			dfu->data.nand.ubi = 1;
 	} else {
-		printf("%s: Memory layout (%s) not supported!\n", __func__, st);
+		printf("%s: Memory layout (%s) not supported!\n", __func__, argv[0]);
 		return -1;
 	}
 

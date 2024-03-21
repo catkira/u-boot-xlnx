@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  *  (C) Copyright 2010
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __ASM_ARCH_TEGRA_DISPLAY_H
@@ -11,20 +10,20 @@
 /**
  * Register a new display based on device tree configuration.
  *
- * The frame buffer can be positioned by U-Boot or overriden by the fdt.
+ * The frame buffer can be positioned by U-Boot or overridden by the fdt.
  * You should pass in the U-Boot address here, and check the contents of
  * struct fdt_disp_config to see what was actually chosen.
  *
  * @param blob			Device tree blob
  * @param default_lcd_base	Default address of LCD frame buffer
- * @return 0 if ok, -1 on error (unsupported bits per pixel)
+ * Return: 0 if ok, -1 on error (unsupported bits per pixel)
  */
 int tegra_display_probe(const void *blob, void *default_lcd_base);
 
 /**
  * Return the current display configuration
  *
- * @return pointer to display configuration, or NULL if there is no valid
+ * Return: pointer to display configuration, or NULL if there is no valid
  * config
  */
 struct fdt_disp_config *tegra_display_get_config(void);

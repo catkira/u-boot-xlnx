@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:      GPL-2.0+
  *
  * Ethernet Switch commands
  */
 
 #include <common.h>
 #include <command.h>
+#include <env.h>
 #include <errno.h>
 #include <env_flags.h>
 #include <ethsw.h>
+#include <net.h>
 
 static const char *ethsw_name;
 
@@ -864,7 +865,7 @@ static int keyword_match_mac_addr(enum ethsw_keyword_id key_id, int argc,
 		return 0;
 	}
 
-	eth_parse_enetaddr(argv[*argc_nr + 1], parsed_cmd->ethaddr);
+	string_to_enetaddr(argv[*argc_nr + 1], parsed_cmd->ethaddr);
 
 	if (is_broadcast_ethaddr(parsed_cmd->ethaddr)) {
 		memset(parsed_cmd->ethaddr, 0xFF, sizeof(parsed_cmd->ethaddr));
@@ -915,7 +916,7 @@ static void cmd_keywords_opt_check(const struct ethsw_command_def *parsed_cmd,
 	 * check if our command's optional keywords match the optional
 	 * keywords of an available command
 	 */
-	for (i = 0; i < ARRAY_SIZE(ethsw_cmd_def); i++) {
+	for (i = 0; i < ARRAY_SIZE(cmd_opt_def); i++) {
 		keyw_opt_matched = 0;
 		cmd_keyw_p = &parsed_cmd->cmd_to_keywords[keyw_opt_matched];
 		cmd_keyw_opt_p = &cmd_opt_def[i].cmd_keyword[keyw_opt_matched];
@@ -999,7 +1000,7 @@ static void cmd_keywords_check(struct ethsw_command_def *parsed_cmd,
 }
 
 /* find all the keywords in the command */
-static int keywords_find(int argc, char * const argv[],
+static int keywords_find(int argc, char *const argv[],
 			 struct ethsw_command_def *parsed_cmd)
 {
 	int i;
@@ -1064,7 +1065,8 @@ static void command_def_init(struct ethsw_command_def *parsed_cmd)
 }
 
 /* function to interpret commands starting with "ethsw " */
-static int do_ethsw(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_ethsw(struct cmd_tbl *cmdtp, int flag, int argc,
+		    char *const argv[])
 {
 	struct ethsw_command_def parsed_cmd;
 	int rc = CMD_RET_SUCCESS;

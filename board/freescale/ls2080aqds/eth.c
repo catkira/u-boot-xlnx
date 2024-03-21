@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <env.h>
+#include <log.h>
+#include <net.h>
 #include <netdev.h>
 #include <asm/io.h>
 #include <asm/arch/fsl_serdes.h>
@@ -14,7 +16,9 @@
 #include <fm_eth.h>
 #include <i2c.h>
 #include <miiphy.h>
+#include <fsl-mc/fsl_mc.h>
 #include <fsl-mc/ldpaa_wriop.h>
+#include <linux/delay.h>
 
 #include "../common/qixis.h"
 
@@ -22,7 +26,9 @@
 
 #define MC_BOOT_ENV_VAR "mcinitcmd"
 
-#ifdef CONFIG_FSL_MC_ENET
+#ifndef CONFIG_DM_ETH
+
+#if defined(CONFIG_FSL_MC_ENET) && !defined(CONFIG_SPL_BUILD)
  /* - In LS2080A there are only 16 SERDES lanes, spread across 2 SERDES banks.
  *   Bank 1 -> Lanes A, B, C, D, E, F, G, H
  *   Bank 2 -> Lanes A,B, C, D, E, F, G, H
@@ -64,7 +70,7 @@ static int sgmii_riser_phy_addr[] = {
 };
 
 /* Slot2 does not have EMI connections */
-#define EMI_NONE	0xFFFFFFFF
+#define EMI_NONE	0xFF
 #define EMI1_SLOT1	0
 #define EMI1_SLOT2	1
 #define EMI1_SLOT3	2
@@ -89,11 +95,16 @@ struct ls2080a_qds_mdio {
 	struct mii_dev *realbus;
 };
 
+struct reg_pair {
+	uint addr;
+	u8 *val;
+};
+
 static void sgmii_configure_repeater(int serdes_port)
 {
 	struct mii_dev *bus;
 	uint8_t a = 0xf;
-	int i, j, ret;
+	int i, j, k, ret;
 	int dpmac_id = 0, dpmac, mii_bus = 0;
 	unsigned short value;
 	char dev[2][20] = {"LS2080A_QDS_MDIO0", "LS2080A_QDS_MDIO3"};
@@ -104,10 +115,30 @@ static void sgmii_configure_repeater(int serdes_port)
 	uint8_t ch_b_eq[] = {0x1, 0x2, 0x3, 0x7};
 	uint8_t ch_b_ctl2[] = {0x81, 0x82, 0x83, 0x84};
 
+	u8 reg_val[6] = {0x18, 0x38, 0x4, 0x14, 0xb5, 0x20};
+	struct reg_pair reg_pair[10] = {
+			{6, &reg_val[0]}, {4, &reg_val[1]},
+			{8, &reg_val[2]}, {0xf, NULL},
+			{0x11, NULL}, {0x16, NULL},
+			{0x18, NULL}, {0x23, &reg_val[3]},
+			{0x2d, &reg_val[4]}, {4, &reg_val[5]},
+	};
+
 	int *riser_phy_addr = &xqsgii_riser_phy_addr[0];
+#if CONFIG_IS_ENABLED(DM_I2C)
+	struct udevice *udev;
+#endif
 
 	/* Set I2c to Slot 1 */
-	i2c_write(0x77, 0, 0, &a, 1);
+#if !CONFIG_IS_ENABLED(DM_I2C)
+	ret = i2c_write(0x77, 0, 0, &a, 1);
+#else
+	ret = i2c_get_chip_for_busnum(0, 0x77, 1, &udev);
+	if (!ret)
+		ret = dm_i2c_write(udev, 0, &a, 1);
+#endif
+	if (ret)
+		goto error;
 
 	for (dpmac = 0; dpmac < 8; dpmac++) {
 		/* Check the PHY status */
@@ -120,7 +151,15 @@ static void sgmii_configure_repeater(int serdes_port)
 			mii_bus = 1;
 			dpmac_id = dpmac + 9;
 			a = 0xb;
-			i2c_write(0x76, 0, 0, &a, 1);
+#if !CONFIG_IS_ENABLED(DM_I2C)
+			ret = i2c_write(0x76, 0, 0, &a, 1);
+#else
+			ret = i2c_get_chip_for_busnum(0, 0x76, 1, &udev);
+			if (!ret)
+				ret = dm_i2c_write(udev, 0, &a, 1);
+#endif
+			if (ret)
+				goto error;
 			break;
 		}
 
@@ -144,36 +183,38 @@ static void sgmii_configure_repeater(int serdes_port)
 
 		mdelay(10);
 
-		if ((value & 0xfff) == 0x40f) {
+		if ((value & 0xfff) == 0x401) {
 			printf("DPMAC %d:PHY is ..... Configured\n", dpmac_id);
+			miiphy_write(dev[mii_bus], riser_phy_addr[dpmac],
+				     0x1f, 0);
 			continue;
 		}
 
 		for (i = 0; i < 4; i++) {
 			for (j = 0; j < 4; j++) {
-				a = 0x18;
-				i2c_write(i2c_addr[dpmac], 6, 1, &a, 1);
-				a = 0x38;
-				i2c_write(i2c_addr[dpmac], 4, 1, &a, 1);
-				a = 0x4;
-				i2c_write(i2c_addr[dpmac], 8, 1, &a, 1);
+				reg_pair[3].val = &ch_a_eq[i];
+				reg_pair[4].val = &ch_a_ctl2[j];
+				reg_pair[5].val = &ch_b_eq[i];
+				reg_pair[6].val = &ch_b_ctl2[j];
 
-				i2c_write(i2c_addr[dpmac], 0xf, 1,
-					  &ch_a_eq[i], 1);
-				i2c_write(i2c_addr[dpmac], 0x11, 1,
-					  &ch_a_ctl2[j], 1);
+				for (k = 0; k < 10; k++) {
+#if !CONFIG_IS_ENABLED(DM_I2C)
+					ret = i2c_write(i2c_addr[dpmac],
+							reg_pair[k].addr,
+							1, reg_pair[k].val, 1);
+#else
+					ret = i2c_get_chip_for_busnum(0,
+							    i2c_addr[dpmac],
+							    1, &udev);
+					if (!ret)
+						ret = dm_i2c_write(udev,
+							  reg_pair[k].addr,
+							  reg_pair[k].val, 1);
+#endif
+					if (ret)
+						goto error;
+				}
 
-				i2c_write(i2c_addr[dpmac], 0x16, 1,
-					  &ch_b_eq[i], 1);
-				i2c_write(i2c_addr[dpmac], 0x18, 1,
-					  &ch_b_ctl2[j], 1);
-
-				a = 0x14;
-				i2c_write(i2c_addr[dpmac], 0x23, 1, &a, 1);
-				a = 0xb5;
-				i2c_write(i2c_addr[dpmac], 0x2d, 1, &a, 1);
-				a = 0x20;
-				i2c_write(i2c_addr[dpmac], 4, 1, &a, 1);
 				mdelay(100);
 				ret = miiphy_read(dev[mii_bus],
 						  riser_phy_addr[dpmac],
@@ -181,28 +222,29 @@ static void sgmii_configure_repeater(int serdes_port)
 				if (ret > 0)
 					goto error;
 
-				mdelay(1);
+				mdelay(100);
 				ret = miiphy_read(dev[mii_bus],
 						  riser_phy_addr[dpmac],
 						  0x11, &value);
 				if (ret > 0)
 					goto error;
-				mdelay(10);
 
-				if ((value & 0xfff) == 0x40f) {
+				if ((value & 0xfff) == 0x401) {
 					printf("DPMAC %d :PHY is configured ",
 					       dpmac_id);
 					printf("after setting repeater 0x%x\n",
 					       value);
 					i = 5;
 					j = 5;
-				} else
+				} else {
 					printf("DPMAC %d :PHY is failed to ",
 					       dpmac_id);
 					printf("configure the repeater 0x%x\n",
 					       value);
 				}
+			}
 		}
+		miiphy_write(dev[mii_bus], riser_phy_addr[dpmac], 0x1f, 0);
 	}
 error:
 	if (ret)
@@ -213,7 +255,7 @@ error:
 static void qsgmii_configure_repeater(int dpmac)
 {
 	uint8_t a = 0xf;
-	int i, j;
+	int i, j, k;
 	int i2c_phy_addr = 0;
 	int phy_addr = 0;
 	int i2c_addr[] = {0x58, 0x59, 0x5a, 0x5b};
@@ -223,12 +265,32 @@ static void qsgmii_configure_repeater(int dpmac)
 	uint8_t ch_b_eq[] = {0x1, 0x2, 0x3, 0x7};
 	uint8_t ch_b_ctl2[] = {0x81, 0x82, 0x83, 0x84};
 
+	u8 reg_val[6] = {0x18, 0x38, 0x4, 0x14, 0xb5, 0x20};
+	struct reg_pair reg_pair[10] = {
+		{6, &reg_val[0]}, {4, &reg_val[1]},
+		{8, &reg_val[2]}, {0xf, NULL},
+		{0x11, NULL}, {0x16, NULL},
+		{0x18, NULL}, {0x23, &reg_val[3]},
+		{0x2d, &reg_val[4]}, {4, &reg_val[5]},
+	};
+
 	const char *dev = "LS2080A_QDS_MDIO0";
 	int ret = 0;
 	unsigned short value;
+#if CONFIG_IS_ENABLED(DM_I2C)
+	struct udevice *udev;
+#endif
 
 	/* Set I2c to Slot 1 */
-	i2c_write(0x77, 0, 0, &a, 1);
+#if !CONFIG_IS_ENABLED(DM_I2C)
+	ret = i2c_write(0x77, 0, 0, &a, 1);
+#else
+	ret = i2c_get_chip_for_busnum(0, 0x77, 1, &udev);
+	if (!ret)
+		ret = dm_i2c_write(udev, 0, &a, 1);
+#endif
+	if (ret)
+		goto error;
 
 	switch (dpmac) {
 	case 1:
@@ -279,25 +341,29 @@ static void qsgmii_configure_repeater(int dpmac)
 
 	for (i = 0; i < 4; i++) {
 		for (j = 0; j < 4; j++) {
-			a = 0x18;
-			i2c_write(i2c_phy_addr, 6, 1, &a, 1);
-			a = 0x38;
-			i2c_write(i2c_phy_addr, 4, 1, &a, 1);
-			a = 0x4;
-			i2c_write(i2c_phy_addr, 8, 1, &a, 1);
+			reg_pair[3].val = &ch_a_eq[i];
+			reg_pair[4].val = &ch_a_ctl2[j];
+			reg_pair[5].val = &ch_b_eq[i];
+			reg_pair[6].val = &ch_b_ctl2[j];
 
-			i2c_write(i2c_phy_addr, 0xf, 1, &ch_a_eq[i], 1);
-			i2c_write(i2c_phy_addr, 0x11, 1, &ch_a_ctl2[j], 1);
+			for (k = 0; k < 10; k++) {
+#if !CONFIG_IS_ENABLED(DM_I2C)
+				ret = i2c_write(i2c_phy_addr,
+						reg_pair[k].addr,
+						1, reg_pair[k].val, 1);
+#else
+				ret = i2c_get_chip_for_busnum(0,
+							      i2c_phy_addr,
+							      1, &udev);
+				if (!ret)
+					ret = dm_i2c_write(udev,
+							   reg_pair[k].addr,
+							   reg_pair[k].val, 1);
+#endif
+				if (ret)
+					goto error;
+			}
 
-			i2c_write(i2c_phy_addr, 0x16, 1, &ch_b_eq[i], 1);
-			i2c_write(i2c_phy_addr, 0x18, 1, &ch_b_ctl2[j], 1);
-
-			a = 0x14;
-			i2c_write(i2c_phy_addr, 0x23, 1, &a, 1);
-			a = 0xb5;
-			i2c_write(i2c_phy_addr, 0x2d, 1, &a, 1);
-			a = 0x20;
-			i2c_write(i2c_phy_addr, 4, 1, &a, 1);
 			mdelay(100);
 			ret = miiphy_read(dev, phy_addr, 0x11, &value);
 			if (ret > 0)
@@ -436,7 +502,7 @@ static int ls2080a_qds_mdio_init(char *realbusname, u8 muxval)
  */
 static void initialize_dpmac_to_slot(void)
 {
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	int serdes1_prtcl = (in_le32(&gur->rcwsr[28]) &
 				FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK)
 		>> FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
@@ -445,7 +511,7 @@ static void initialize_dpmac_to_slot(void)
 		>> FSL_CHASSIS3_RCWSR28_SRDS2_PRTCL_SHIFT;
 
 	char *env_hwconfig;
-	env_hwconfig = getenv("hwconfig");
+	env_hwconfig = env_get("hwconfig");
 
 	switch (serdes1_prtcl) {
 	case 0x07:
@@ -470,7 +536,49 @@ static void initialize_dpmac_to_slot(void)
 		}
 		break;
 
+	case 0x39:
+		printf("qds: WRIOP: Supported SerDes1 Protocol 0x%02x\n",
+		       serdes1_prtcl);
+		if (hwconfig_f("xqsgmii", env_hwconfig)) {
+			lane_to_slot_fsm1[0] = EMI1_SLOT3;
+			lane_to_slot_fsm1[1] = EMI1_SLOT3;
+			lane_to_slot_fsm1[2] = EMI1_SLOT3;
+			lane_to_slot_fsm1[3] = EMI_NONE;
+		} else {
+			lane_to_slot_fsm1[0] = EMI_NONE;
+			lane_to_slot_fsm1[1] = EMI_NONE;
+			lane_to_slot_fsm1[2] = EMI_NONE;
+			lane_to_slot_fsm1[3] = EMI_NONE;
+		}
+		lane_to_slot_fsm1[4] = EMI1_SLOT3;
+		lane_to_slot_fsm1[5] = EMI1_SLOT3;
+		lane_to_slot_fsm1[6] = EMI1_SLOT3;
+		lane_to_slot_fsm1[7] = EMI_NONE;
+		break;
+
+	case 0x4D:
+		printf("qds: WRIOP: Supported SerDes1 Protocol 0x%02x\n",
+		       serdes1_prtcl);
+		if (hwconfig_f("xqsgmii", env_hwconfig)) {
+			lane_to_slot_fsm1[0] = EMI1_SLOT3;
+			lane_to_slot_fsm1[1] = EMI1_SLOT3;
+			lane_to_slot_fsm1[2] = EMI_NONE;
+			lane_to_slot_fsm1[3] = EMI_NONE;
+		} else {
+			lane_to_slot_fsm1[0] = EMI_NONE;
+			lane_to_slot_fsm1[1] = EMI_NONE;
+			lane_to_slot_fsm1[2] = EMI_NONE;
+			lane_to_slot_fsm1[3] = EMI_NONE;
+		}
+		lane_to_slot_fsm1[4] = EMI1_SLOT3;
+		lane_to_slot_fsm1[5] = EMI1_SLOT3;
+		lane_to_slot_fsm1[6] = EMI_NONE;
+		lane_to_slot_fsm1[7] = EMI_NONE;
+		break;
+
 	case 0x2A:
+	case 0x4B:
+	case 0x4C:
 		printf("qds: WRIOP: Supported SerDes1 Protocol 0x%02x\n",
 		       serdes1_prtcl);
 		break;
@@ -505,6 +613,38 @@ static void initialize_dpmac_to_slot(void)
 			lane_to_slot_fsm2[7] = EMI1_SLOT6;
 		}
 		break;
+
+	case 0x47:
+		printf("qds: WRIOP: Supported SerDes2 Protocol 0x%02x\n",
+		       serdes2_prtcl);
+		lane_to_slot_fsm2[0] = EMI_NONE;
+		lane_to_slot_fsm2[1] = EMI1_SLOT5;
+		lane_to_slot_fsm2[2] = EMI1_SLOT5;
+		lane_to_slot_fsm2[3] = EMI1_SLOT5;
+
+		if (hwconfig_f("xqsgmii", env_hwconfig)) {
+			lane_to_slot_fsm2[4] = EMI_NONE;
+			lane_to_slot_fsm2[5] = EMI1_SLOT5;
+			lane_to_slot_fsm2[6] = EMI1_SLOT5;
+			lane_to_slot_fsm2[7] = EMI1_SLOT5;
+		}
+		break;
+
+	case 0x57:
+		printf("qds: WRIOP: Supported SerDes2 Protocol 0x%02x\n",
+		       serdes2_prtcl);
+		if (hwconfig_f("xqsgmii", env_hwconfig)) {
+			lane_to_slot_fsm2[0] = EMI_NONE;
+			lane_to_slot_fsm2[1] = EMI_NONE;
+			lane_to_slot_fsm2[2] = EMI_NONE;
+			lane_to_slot_fsm2[3] = EMI_NONE;
+		}
+		lane_to_slot_fsm2[4] = EMI_NONE;
+		lane_to_slot_fsm2[5] = EMI_NONE;
+		lane_to_slot_fsm2[6] = EMI1_SLOT5;
+		lane_to_slot_fsm2[7] = EMI1_SLOT5;
+		break;
+
 	default:
 		printf(" %s qds: WRIOP: Unsupported SerDes2 Protocol 0x%02x\n",
 		       __func__ , serdes2_prtcl);
@@ -516,7 +656,7 @@ void ls2080a_handle_phy_interface_sgmii(int dpmac_id)
 {
 	int lane, slot;
 	struct mii_dev *bus;
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	int serdes1_prtcl = (in_le32(&gur->rcwsr[28]) &
 				FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK)
 		>> FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
@@ -525,7 +665,7 @@ void ls2080a_handle_phy_interface_sgmii(int dpmac_id)
 		>> FSL_CHASSIS3_RCWSR28_SRDS2_PRTCL_SHIFT;
 
 	int *riser_phy_addr;
-	char *env_hwconfig = getenv("hwconfig");
+	char *env_hwconfig = env_get("hwconfig");
 
 	if (hwconfig_f("xqsgmii", env_hwconfig))
 		riser_phy_addr = &xqsgii_riser_phy_addr[0];
@@ -537,14 +677,16 @@ void ls2080a_handle_phy_interface_sgmii(int dpmac_id)
 
 	switch (serdes1_prtcl) {
 	case 0x07:
+	case 0x39:
+	case 0x4D:
+		lane = serdes_get_first_lane(FSL_SRDS_1, SGMII1 + dpmac_id - 1);
 
-		lane = serdes_get_first_lane(FSL_SRDS_1, SGMII1 + dpmac_id);
 		slot = lane_to_slot_fsm1[lane];
 
 		switch (++slot) {
 		case 1:
 			/* Slot housing a SGMII riser card? */
-			wriop_set_phy_address(dpmac_id,
+			wriop_set_phy_address(dpmac_id, 0,
 					      riser_phy_addr[dpmac_id - 1]);
 			dpmac_info[dpmac_id].board_mux = EMI1_SLOT1;
 			bus = mii_dev_for_muxval(EMI1_SLOT1);
@@ -552,13 +694,33 @@ void ls2080a_handle_phy_interface_sgmii(int dpmac_id)
 			break;
 		case 2:
 			/* Slot housing a SGMII riser card? */
-			wriop_set_phy_address(dpmac_id,
+			wriop_set_phy_address(dpmac_id, 0,
 					      riser_phy_addr[dpmac_id - 1]);
 			dpmac_info[dpmac_id].board_mux = EMI1_SLOT2;
 			bus = mii_dev_for_muxval(EMI1_SLOT2);
 			wriop_set_mdio(dpmac_id, bus);
 			break;
 		case 3:
+			if (slot == EMI_NONE)
+				return;
+			if (serdes1_prtcl == 0x39) {
+				wriop_set_phy_address(dpmac_id, 0,
+					riser_phy_addr[dpmac_id - 2]);
+				if (dpmac_id >= 6 && hwconfig_f("xqsgmii",
+								env_hwconfig))
+					wriop_set_phy_address(dpmac_id, 0,
+						riser_phy_addr[dpmac_id - 3]);
+			} else {
+				wriop_set_phy_address(dpmac_id, 0,
+					riser_phy_addr[dpmac_id - 2]);
+				if (dpmac_id >= 7 && hwconfig_f("xqsgmii",
+								env_hwconfig))
+					wriop_set_phy_address(dpmac_id, 0,
+						riser_phy_addr[dpmac_id - 3]);
+			}
+			dpmac_info[dpmac_id].board_mux = EMI1_SLOT3;
+			bus = mii_dev_for_muxval(EMI1_SLOT3);
+			wriop_set_mdio(dpmac_id, bus);
 			break;
 		case 4:
 			break;
@@ -579,6 +741,8 @@ serdes2:
 	case 0x07:
 	case 0x08:
 	case 0x49:
+	case 0x47:
+	case 0x57:
 		lane = serdes_get_first_lane(FSL_SRDS_2, SGMII9 +
 							(dpmac_id - 9));
 		slot = lane_to_slot_fsm2[lane];
@@ -590,17 +754,33 @@ serdes2:
 			break;
 		case 4:
 			/* Slot housing a SGMII riser card? */
-			wriop_set_phy_address(dpmac_id,
+			wriop_set_phy_address(dpmac_id, 0,
 					      riser_phy_addr[dpmac_id - 9]);
 			dpmac_info[dpmac_id].board_mux = EMI1_SLOT4;
 			bus = mii_dev_for_muxval(EMI1_SLOT4);
 			wriop_set_mdio(dpmac_id, bus);
 		break;
 		case 5:
-		break;
+			if (slot == EMI_NONE)
+				return;
+			if (serdes2_prtcl == 0x47) {
+				wriop_set_phy_address(dpmac_id, 0,
+					      riser_phy_addr[dpmac_id - 10]);
+				if (dpmac_id >= 14 && hwconfig_f("xqsgmii",
+								 env_hwconfig))
+					wriop_set_phy_address(dpmac_id, 0,
+						riser_phy_addr[dpmac_id - 11]);
+			} else {
+				wriop_set_phy_address(dpmac_id, 0,
+					riser_phy_addr[dpmac_id - 11]);
+			}
+			dpmac_info[dpmac_id].board_mux = EMI1_SLOT5;
+			bus = mii_dev_for_muxval(EMI1_SLOT5);
+			wriop_set_mdio(dpmac_id, bus);
+			break;
 		case 6:
 			/* Slot housing a SGMII riser card? */
-			wriop_set_phy_address(dpmac_id,
+			wriop_set_phy_address(dpmac_id, 0,
 					      riser_phy_addr[dpmac_id - 13]);
 			dpmac_info[dpmac_id].board_mux = EMI1_SLOT6;
 			bus = mii_dev_for_muxval(EMI1_SLOT6);
@@ -619,7 +799,7 @@ void ls2080a_handle_phy_interface_qsgmii(int dpmac_id)
 {
 	int lane = 0, slot;
 	struct mii_dev *bus;
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	int serdes1_prtcl = (in_le32(&gur->rcwsr[28]) &
 				FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK)
 		>> FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
@@ -658,7 +838,7 @@ void ls2080a_handle_phy_interface_qsgmii(int dpmac_id)
 		switch (++slot) {
 		case 1:
 			/* Slot housing a QSGMII riser card? */
-			wriop_set_phy_address(dpmac_id, dpmac_id - 1);
+			wriop_set_phy_address(dpmac_id, 0, dpmac_id - 1);
 			dpmac_info[dpmac_id].board_mux = EMI1_SLOT1;
 			bus = mii_dev_for_muxval(EMI1_SLOT1);
 			wriop_set_mdio(dpmac_id, bus);
@@ -684,23 +864,24 @@ void ls2080a_handle_phy_interface_qsgmii(int dpmac_id)
 
 void ls2080a_handle_phy_interface_xsgmii(int i)
 {
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	int serdes1_prtcl = (in_le32(&gur->rcwsr[28]) &
 				FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK)
 		>> FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
 
 	switch (serdes1_prtcl) {
 	case 0x2A:
+	case 0x4B:
+	case 0x4C:
 		/*
-		 * XFI does not need a PHY to work, but to avoid U-Boot use
-		 * default PHY address which is zero to a MAC when it found
-		 * a MAC has no PHY address, we give a PHY address to XFI
-		 * MAC, and should not use a real XAUI PHY address, since
-		 * MDIO can access it successfully, and then MDIO thinks
-		 * the XAUI card is used for the XFI MAC, which will cause
-		 * error.
+		 * 10GBase-R does not need a PHY to work, but to avoid U-Boot
+		 * use default PHY address which is zero to a MAC when it found
+		 * a MAC has no PHY address, we give a PHY address to 10GBase-R
+		 * MAC, and should not use a real XAUI PHY address, since MDIO
+		 * can access it successfully, and then MDIO thinks the XAUI
+		 * card is used for the 10GBase-R MAC, which will cause error.
 		 */
-		wriop_set_phy_address(i, i + 4);
+		wriop_set_phy_address(i, 0, i + 4);
 		ls2080a_qds_enable_SFP_TX(SFP_TX);
 
 		break;
@@ -711,13 +892,13 @@ void ls2080a_handle_phy_interface_xsgmii(int i)
 	}
 }
 #endif
+#endif // !CONFIG_DM_ETH
 
-int board_eth_init(bd_t *bis)
+int board_eth_init(struct bd_info *bis)
 {
-	int error;
-	char *mc_boot_env_var;
-#ifdef CONFIG_FSL_MC_ENET
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+#ifndef CONFIG_DM_ETH
+#if defined(CONFIG_FSL_MC_ENET) && !defined(CONFIG_SPL_BUILD)
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	int serdes1_prtcl = (in_le32(&gur->rcwsr[28]) &
 				FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK)
 		>> FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
@@ -729,8 +910,9 @@ int board_eth_init(bd_t *bis)
 	struct memac_mdio_info *memac_mdio1_info;
 	unsigned int i;
 	char *env_hwconfig;
+	int error;
 
-	env_hwconfig = getenv("hwconfig");
+	env_hwconfig = env_get("hwconfig");
 
 	initialize_dpmac_to_slot();
 
@@ -738,7 +920,7 @@ int board_eth_init(bd_t *bis)
 					sizeof(struct memac_mdio_info));
 	memac_mdio0_info->regs =
 		(struct memac_mdio_controller *)
-					CONFIG_SYS_FSL_WRIOP1_MDIO1;
+					CFG_SYS_FSL_WRIOP1_MDIO1;
 	memac_mdio0_info->name = DEFAULT_WRIOP_MDIO1_NAME;
 
 	/* Register the real MDIO1 bus */
@@ -748,7 +930,7 @@ int board_eth_init(bd_t *bis)
 					sizeof(struct memac_mdio_info));
 	memac_mdio1_info->regs =
 		(struct memac_mdio_controller *)
-					CONFIG_SYS_FSL_WRIOP1_MDIO2;
+					CFG_SYS_FSL_WRIOP1_MDIO2;
 	memac_mdio1_info->name = DEFAULT_WRIOP_MDIO2_NAME;
 
 	/* Register the real MDIO2 bus */
@@ -783,9 +965,6 @@ int board_eth_init(bd_t *bis)
 		}
 	}
 
-	mc_boot_env_var = getenv(MC_BOOT_ENV_VAR);
-	if (mc_boot_env_var)
-		run_command_list(mc_boot_env_var, -1, 0);
 	error = cpu_eth_init(bis);
 
 	if (hwconfig_f("xqsgmii", env_hwconfig)) {
@@ -796,10 +975,115 @@ int board_eth_init(bd_t *bis)
 			sgmii_configure_repeater(2);
 	}
 #endif
-	error = pci_eth_init(bis);
-	return error;
+#endif // !CONFIG_DM_ETH
+
+#ifdef CONFIG_DM_ETH
+	return 0;
+#else
+	return pci_eth_init(bis);
+#endif
 }
 
-#ifdef CONFIG_FSL_MC_ENET
+#if defined(CONFIG_RESET_PHY_R)
+void reset_phy(void)
+{
+	mc_env_boot();
+}
+#endif /* CONFIG_RESET_PHY_R */
+
+#if defined(CONFIG_DM_ETH) && defined(CONFIG_MULTI_DTB_FIT)
+
+/* Structure to hold SERDES protocols supported in case of
+ * CONFIG_DM_ETH enabled (network interfaces are described in the DTS).
+ *
+ * @serdes_block: the index of the SERDES block
+ * @serdes_protocol: the decimal value of the protocol supported
+ * @dts_needed: DTS notes describing the current configuration are needed
+ *
+ * When dts_needed is true, the board_fit_config_name_match() function
+ * will try to exactly match the current configuration of the block with a DTS
+ * name provided.
+ */
+static struct serdes_configuration {
+	u8 serdes_block;
+	u32 serdes_protocol;
+	bool dts_needed;
+} supported_protocols[] = {
+	/* Serdes block #1 */
+	{1, 42, true},
+
+	/* Serdes block #2 */
+	{2, 65, false},
+};
+
+#define SUPPORTED_SERDES_PROTOCOLS ARRAY_SIZE(supported_protocols)
+
+static bool protocol_supported(u8 serdes_block, u32 protocol)
+{
+	struct serdes_configuration serdes_conf;
+	int i;
+
+	for (i = 0; i < SUPPORTED_SERDES_PROTOCOLS; i++) {
+		serdes_conf = supported_protocols[i];
+		if (serdes_conf.serdes_block == serdes_block &&
+		    serdes_conf.serdes_protocol == protocol)
+			return true;
+	}
+
+	return false;
+}
+
+static void get_str_protocol(u8 serdes_block, u32 protocol, char *str)
+{
+	struct serdes_configuration serdes_conf;
+	int i;
+
+	for (i = 0; i < SUPPORTED_SERDES_PROTOCOLS; i++) {
+		serdes_conf = supported_protocols[i];
+		if (serdes_conf.serdes_block == serdes_block &&
+		    serdes_conf.serdes_protocol == protocol) {
+			if (serdes_conf.dts_needed == true)
+				sprintf(str, "%u", protocol);
+			else
+				sprintf(str, "x");
+			return;
+		}
+	}
+}
+
+int board_fit_config_name_match(const char *name)
+{
+	struct ccsr_gur *gur = (void *)(CFG_SYS_FSL_GUTS_ADDR);
+	u32 rcw_status = in_le32(&gur->rcwsr[28]);
+	char srds_s1_str[2], srds_s2_str[2];
+	u32 srds_s1, srds_s2;
+	char expected_dts[100];
+
+	srds_s1 = rcw_status & FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_MASK;
+	srds_s1 >>= FSL_CHASSIS3_RCWSR28_SRDS1_PRTCL_SHIFT;
+
+	srds_s2 = rcw_status & FSL_CHASSIS3_RCWSR28_SRDS2_PRTCL_MASK;
+	srds_s2 >>= FSL_CHASSIS3_RCWSR28_SRDS2_PRTCL_SHIFT;
+
+	/* Check for supported protocols. The default DTS will be used
+	 * in this case
+	 */
+	if (!protocol_supported(1, srds_s1) ||
+	    !protocol_supported(2, srds_s2))
+		return -1;
+
+	get_str_protocol(1, srds_s1, srds_s1_str);
+	get_str_protocol(2, srds_s2, srds_s2_str);
+
+	printf("expected_dts %s\n", expected_dts);
+	sprintf(expected_dts, "fsl-ls2080a-qds-%s-%s",
+		srds_s1_str, srds_s2_str);
+
+	if (!strcmp(name, expected_dts))
+		return 0;
+
+	printf("this is not!\n");
+	return -1;
+}
 
 #endif

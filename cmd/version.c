@@ -1,23 +1,32 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2000-2009
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <command.h>
+#include <display_options.h>
+#include <timestamp.h>
 #include <version.h>
+#include <version_string.h>
 #include <linux/compiler.h>
+#include <env.h>
 #ifdef CONFIG_SYS_COREBOOT
-#include <asm/arch/sysinfo.h>
+#include <asm/cb_sysinfo.h>
 #endif
 
-const char __weak version_string[] = U_BOOT_VERSION_STRING;
+#define U_BOOT_VERSION_STRING U_BOOT_VERSION " (" U_BOOT_DATE " - " \
+	U_BOOT_TIME " " U_BOOT_TZ ")" CONFIG_IDENT_STRING
 
-static int do_version(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+const char version_string[] = U_BOOT_VERSION_STRING;
+
+static int do_version(struct cmd_tbl *cmdtp, int flag, int argc,
+		      char *const argv[])
 {
-	printf("\n%s\n", version_string);
+	char buf[DISPLAY_OPTIONS_BANNER_LENGTH];
+
+	printf(display_options_get_banner(false, buf, sizeof(buf)));
 #ifdef CC_VERSION_STRING
 	puts(CC_VERSION_STRING "\n");
 #endif
@@ -36,9 +45,9 @@ U_BOOT_CMD(
 	""
 );
 
-static int do_env_version(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_env_version(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[])
 {
-	setenv("uboot-version", version_string);
+	env_set("uboot-version", version_string);
 	return 0;
 }
 
@@ -49,7 +58,7 @@ U_BOOT_CMD(
 );
 
 #include "xadcps.h"
-static int do_xadc(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_xadc(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[])
 {
 	static XAdcPs XAdcInst;      /* XADC driver instance */
 	XAdcPs_Config *ConfigPtr;
@@ -98,16 +107,16 @@ U_BOOT_CMD(
 
 extern int pluto_revA;
 
-static int do_adi_hw_version(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_adi_hw_version(struct cmd_tbl *cmdtp, int flag, int argc, char * const argv[])
 {
 	int val, ret = 0, i;
 	char buf[16];
 
 	if (pluto_revA) {
-		setenv("PlutoRevA", "1");
+		env_set("PlutoRevA", "1");
 	} else {
 		val = do_xadc(cmdtp, flag, 1, argv);
-		setenv("PlutoRevA", "");
+		env_set("PlutoRevA", "");
 		for (i = 100; i <= 1000; i += 100) {
 			if ((val >= (i - 50)) && (val < (i + 50))) {
 				ret = i / 100;
@@ -117,7 +126,7 @@ static int do_adi_hw_version(cmd_tbl_t *cmdtp, int flag, int argc, char * const 
 	}
 
 	snprintf(buf, sizeof(buf), "config@%d", ret);
-	setenv("fit_config", buf);
+	env_set("fit_config", buf);
 
 	return ret;
 }

@@ -1,38 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2011 The Chromium OS Authors.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <command.h>
+#include <env.h>
 #include <mapmem.h>
 #include <trace.h>
 #include <asm/io.h>
 
-static int get_args(int argc, char * const argv[], char **buff,
+static int get_args(int argc, char *const argv[], char **buff,
 		    size_t *buff_ptr, size_t *buff_size)
 {
 	if (argc < 2)
 		return -1;
 	if (argc < 4) {
-		*buff_size = getenv_ulong("profsize", 16, 0);
-		*buff = map_sysmem(getenv_ulong("profbase", 16, 0),
+		*buff_size = env_get_ulong("profsize", 16, 0);
+		*buff = map_sysmem(env_get_ulong("profbase", 16, 0),
 				   *buff_size);
-		*buff_ptr = getenv_ulong("profoffset", 16, 0);
+		*buff_ptr = env_get_ulong("profoffset", 16, 0);
 	} else {
-		*buff_size = simple_strtoul(argv[3], NULL, 16);
-		*buff = map_sysmem(simple_strtoul(argv[2], NULL, 16),
+		*buff_size = hextoul(argv[3], NULL);
+		*buff = map_sysmem(hextoul(argv[2], NULL),
 				   *buff_size);
 		*buff_ptr = 0;
 	};
 	return 0;
 }
 
-static int create_func_list(int argc, char * const argv[])
+static int create_func_list(int argc, char *const argv[])
 {
-	size_t buff_size, avail, buff_ptr, used;
-	unsigned int needed;
+	size_t buff_size, avail, buff_ptr, needed, used;
 	char *buff;
 	int err;
 
@@ -42,21 +41,20 @@ static int create_func_list(int argc, char * const argv[])
 	avail = buff_size - buff_ptr;
 	err = trace_list_functions(buff + buff_ptr, avail, &needed);
 	if (err)
-		printf("Error: truncated (%#x bytes needed)\n", needed);
+		printf("Error: truncated (%#zx bytes needed)\n", needed);
 	used = min(avail, (size_t)needed);
 	printf("Function trace dumped to %08lx, size %#zx\n",
 	       (ulong)map_to_sysmem(buff + buff_ptr), used);
-	setenv_hex("profbase", map_to_sysmem(buff));
-	setenv_hex("profsize", buff_size);
-	setenv_hex("profoffset", buff_ptr + used);
+	env_set_hex("profbase", map_to_sysmem(buff));
+	env_set_hex("profsize", buff_size);
+	env_set_hex("profoffset", buff_ptr + used);
 
 	return 0;
 }
 
-static int create_call_list(int argc, char * const argv[])
+static int create_call_list(int argc, char *const argv[])
 {
-	size_t buff_size, avail, buff_ptr, used;
-	unsigned int needed;
+	size_t buff_size, avail, buff_ptr, needed, used;
 	char *buff;
 	int err;
 
@@ -66,19 +64,19 @@ static int create_call_list(int argc, char * const argv[])
 	avail = buff_size - buff_ptr;
 	err = trace_list_calls(buff + buff_ptr, avail, &needed);
 	if (err)
-		printf("Error: truncated (%#x bytes needed)\n", needed);
+		printf("Error: truncated (%#zx bytes needed)\n", needed);
 	used = min(avail, (size_t)needed);
 	printf("Call list dumped to %08lx, size %#zx\n",
 	       (ulong)map_to_sysmem(buff + buff_ptr), used);
 
-	setenv_hex("profbase", map_to_sysmem(buff));
-	setenv_hex("profsize", buff_size);
-	setenv_hex("profoffset", buff_ptr + used);
+	env_set_hex("profbase", map_to_sysmem(buff));
+	env_set_hex("profsize", buff_size);
+	env_set_hex("profoffset", buff_ptr + used);
 
 	return 0;
 }
 
-int do_trace(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_trace(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	const char *cmd = argc < 2 ? NULL : argv[1];
 

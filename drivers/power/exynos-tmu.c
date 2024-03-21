@@ -20,6 +20,7 @@
 #include <common.h>
 #include <errno.h>
 #include <fdtdec.h>
+#include <log.h>
 #include <tmu.h>
 #include <asm/arch/tmu.h>
 #include <asm/arch/power.h>
@@ -101,7 +102,7 @@ static struct tmu_info gbl_info;
  * then calculate and calibrate it's value
  * in degree celsius.
  *
- * @return	current temperature of the chip as sensed by TMU
+ * Return:	current temperature of the chip as sensed by TMU
  */
 static int get_cur_temp(struct tmu_info *info)
 {
@@ -134,7 +135,7 @@ static int get_cur_temp(struct tmu_info *info)
  * Monitors status of the TMU device and exynos temperature
  *
  * @param temp	pointer to the current temperature value
- * @return	enum tmu_status_t value, code indicating event to execute
+ * Return:	enum tmu_status_t value, code indicating event to execute
  */
 enum tmu_status_t tmu_monitor(int *temp)
 {
@@ -176,7 +177,7 @@ enum tmu_status_t tmu_monitor(int *temp)
  *
  * @param info	pointer to the tmu_info struct
  * @param blob  FDT blob
- * @return	int value, 0 for success
+ * Return:	int value, 0 for success
  */
 static int get_tmu_fdt_values(struct tmu_info *info, const void *blob)
 {
@@ -190,7 +191,7 @@ static int get_tmu_fdt_values(struct tmu_info *info, const void *blob)
 				      COMPAT_SAMSUNG_EXYNOS_TMU);
 	if (node < 0) {
 		debug("EXYNOS_TMU: No node for tmu in device tree\n");
-		return -1;
+		return -ENODEV;
 	}
 
 	/*
@@ -202,7 +203,7 @@ static int get_tmu_fdt_values(struct tmu_info *info, const void *blob)
 	addr = fdtdec_get_addr(blob, node, "reg");
 	if (addr == FDT_ADDR_T_NONE) {
 		debug("%s: Missing tmu-base\n", __func__);
-		return -1;
+		return -ENODEV;
 	}
 	info->tmu_base = (struct exynos5_tmu_reg *)addr;
 
@@ -246,11 +247,11 @@ static int get_tmu_fdt_values(struct tmu_info *info, const void *blob)
 
 	if (error) {
 		debug("fail to get tmu node properties\n");
-		return -1;
+		return -EINVAL;
 	}
 #else
 	/* Non DT support may never be added. Just in case  */
-	return -1;
+	return -ENODEV;
 #endif
 
 	return 0;
@@ -331,7 +332,7 @@ static void tmu_setup_parameters(struct tmu_info *info)
  * Initialize TMU device
  *
  * @param blob  FDT blob
- * @return	int value, 0 for success
+ * Return:	int value, 0 for success
  */
 int tmu_init(const void *blob)
 {

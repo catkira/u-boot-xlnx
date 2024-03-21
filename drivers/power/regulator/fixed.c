@@ -1,55 +1,46 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  Copyright (C) 2015 Samsung Electronics
  *
  *  Przemyslaw Marczak <p.marczak@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
-#include <fdtdec.h>
+#include <clk.h>
 #include <errno.h>
 #include <dm.h>
-#include <i2c.h>
-#include <asm/gpio.h>
+#include <linux/delay.h>
+#include <log.h>
 #include <power/pmic.h>
 #include <power/regulator.h>
 
-DECLARE_GLOBAL_DATA_PTR;
+#include "regulator_common.h"
 
-struct fixed_regulator_platdata {
-	struct gpio_desc gpio; /* GPIO for regulator enable control */
+struct fixed_clock_regulator_plat {
+	struct clk *enable_clock;
+	unsigned int clk_enable_counter;
 };
 
-static int fixed_regulator_ofdata_to_platdata(struct udevice *dev)
+static int fixed_regulator_of_to_plat(struct udevice *dev)
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
-	struct fixed_regulator_platdata *dev_pdata;
-	struct gpio_desc *gpio;
-	int ret;
+	struct dm_regulator_uclass_plat *uc_pdata;
+	struct regulator_common_plat *dev_pdata;
 
-	dev_pdata = dev_get_platdata(dev);
-	uc_pdata = dev_get_uclass_platdata(dev);
+	dev_pdata = dev_get_plat(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 	if (!uc_pdata)
 		return -ENXIO;
 
-	/* Set type to fixed */
 	uc_pdata->type = REGULATOR_TYPE_FIXED;
 
-	/* Get fixed regulator gpio desc */
-	gpio = &dev_pdata->gpio;
-	ret = gpio_request_by_name(dev, "gpio", 0, gpio, GPIOD_IS_OUT);
-	if (ret)
-		debug("Fixed regulator gpio - not found! Error: %d", ret);
-
-	return 0;
+	return regulator_common_of_to_plat(dev, dev_pdata, "gpio");
 }
 
 static int fixed_regulator_get_value(struct udevice *dev)
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 	if (!uc_pdata)
 		return -ENXIO;
 
@@ -63,9 +54,9 @@ static int fixed_regulator_get_value(struct udevice *dev)
 
 static int fixed_regulator_get_current(struct udevice *dev)
 {
-	struct dm_regulator_uclass_platdata *uc_pdata;
+	struct dm_regulator_uclass_plat *uc_pdata;
 
-	uc_pdata = dev_get_uclass_platdata(dev);
+	uc_pdata = dev_get_uclass_plat(dev);
 	if (!uc_pdata)
 		return -ENXIO;
 
@@ -77,31 +68,46 @@ static int fixed_regulator_get_current(struct udevice *dev)
 	return uc_pdata->min_uA;
 }
 
-static bool fixed_regulator_get_enable(struct udevice *dev)
+static int fixed_regulator_get_enable(struct udevice *dev)
 {
-	struct fixed_regulator_platdata *dev_pdata = dev_get_platdata(dev);
-
-	if (!dev_pdata->gpio.dev)
-		return false;
-
-	return dm_gpio_get_value(&dev_pdata->gpio);
+	return regulator_common_get_enable(dev, dev_get_plat(dev));
 }
 
 static int fixed_regulator_set_enable(struct udevice *dev, bool enable)
 {
-	struct fixed_regulator_platdata *dev_pdata = dev_get_platdata(dev);
-	int ret;
+	return regulator_common_set_enable(dev, dev_get_plat(dev), enable);
+}
 
-	if (!dev_pdata->gpio.dev)
-		return -ENOSYS;
+static int fixed_clock_regulator_get_enable(struct udevice *dev)
+{
+	struct fixed_clock_regulator_plat *priv = dev_get_priv(dev);
 
-	ret = dm_gpio_set_value(&dev_pdata->gpio, enable);
-	if (ret) {
-		error("Can't set regulator : %s gpio to: %d\n", dev->name,
-		      enable);
-		return ret;
+	return priv->clk_enable_counter > 0;
+}
+
+static int fixed_clock_regulator_set_enable(struct udevice *dev, bool enable)
+{
+	struct fixed_clock_regulator_plat *priv = dev_get_priv(dev);
+	struct regulator_common_plat *dev_pdata = dev_get_plat(dev);
+	int ret = 0;
+
+	if (enable) {
+		ret = clk_enable(priv->enable_clock);
+		priv->clk_enable_counter++;
+	} else {
+		ret = clk_disable(priv->enable_clock);
+		priv->clk_enable_counter--;
 	}
-	return 0;
+	if (ret)
+		return ret;
+
+	if (enable && dev_pdata->startup_delay_us)
+		udelay(dev_pdata->startup_delay_us);
+
+	if (!enable && dev_pdata->off_on_delay_us)
+		udelay(dev_pdata->off_on_delay_us);
+
+	return ret;
 }
 
 static const struct dm_regulator_ops fixed_regulator_ops = {
@@ -111,16 +117,35 @@ static const struct dm_regulator_ops fixed_regulator_ops = {
 	.set_enable	= fixed_regulator_set_enable,
 };
 
+static const struct dm_regulator_ops fixed_clock_regulator_ops = {
+	.get_enable	= fixed_clock_regulator_get_enable,
+	.set_enable	= fixed_clock_regulator_set_enable,
+};
+
 static const struct udevice_id fixed_regulator_ids[] = {
 	{ .compatible = "regulator-fixed" },
 	{ },
 };
 
-U_BOOT_DRIVER(fixed_regulator) = {
-	.name = "fixed regulator",
+static const struct udevice_id fixed_clock_regulator_ids[] = {
+	{ .compatible = "regulator-fixed-clock" },
+	{ },
+};
+
+U_BOOT_DRIVER(regulator_fixed) = {
+	.name = "regulator_fixed",
 	.id = UCLASS_REGULATOR,
 	.ops = &fixed_regulator_ops,
 	.of_match = fixed_regulator_ids,
-	.ofdata_to_platdata = fixed_regulator_ofdata_to_platdata,
-	.platdata_auto_alloc_size = sizeof(struct fixed_regulator_platdata),
+	.of_to_plat = fixed_regulator_of_to_plat,
+	.plat_auto = sizeof(struct regulator_common_plat),
+};
+
+U_BOOT_DRIVER(regulator_fixed_clock) = {
+	.name = "regulator_fixed_clk",
+	.id = UCLASS_REGULATOR,
+	.ops = &fixed_clock_regulator_ops,
+	.of_match = fixed_clock_regulator_ids,
+	.of_to_plat = fixed_regulator_of_to_plat,
+	.plat_auto = sizeof(struct fixed_clock_regulator_plat),
 };

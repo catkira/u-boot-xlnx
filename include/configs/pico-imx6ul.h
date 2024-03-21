@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015 Technexion Ltd.
  *
  * Configuration settings for the Technexion PICO-IMX6UL-EMMC board.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef __PICO_IMX6UL_CONFIG_H
 #define __PICO_IMX6UL_CONFIG_H
@@ -12,121 +11,99 @@
 #include <asm/arch/imx-regs.h>
 #include <linux/sizes.h>
 #include "mx6_common.h"
-#include <asm/imx-common/gpio.h>
+#include <asm/mach-imx/gpio.h>
+#include "imx6_spl.h"
 
-#define CONFIG_DISPLAY_CPUINFO
-#define CONFIG_DISPLAY_BOARDINFO
+#ifdef CONFIG_SPL_OS_BOOT
+/* Falcon Mode */
 
-/* Size of malloc() pool */
-#define CONFIG_SYS_MALLOC_LEN		(16 * SZ_1M)
+/* Falcon Mode - MMC support: args@1MB kernel@2MB */
+#endif
 
-#define CONFIG_BOARD_EARLY_INIT_F
+/* Network support */
 
-#define CONFIG_MXC_UART
+#define CONFIG_FEC_MXC_PHYADDR		0x1
+
 #define CONFIG_MXC_UART_BASE		UART6_BASE_ADDR
 
 /* MMC Configs */
-#define CONFIG_FSL_USDHC
-#define CONFIG_FSL_ESDHC
-#define CONFIG_SYS_FSL_ESDHC_ADDR	USDHC1_BASE_ADDR
-
-#define CONFIG_MMC
-#define CONFIG_GENERIC_MMC
-#define CONFIG_DOS_PARTITION
-#define CONFIG_SUPPORT_EMMC_BOOT
+#define CFG_SYS_FSL_ESDHC_ADDR	USDHC1_BASE_ADDR
 
 /* USB Configs */
-#define CONFIG_USB_EHCI
-#define CONFIG_USB_EHCI_MX6
-#define CONFIG_USB_STORAGE
-#define CONFIG_EHCI_HCD_INIT_AFTER_RESET
 #define CONFIG_MXC_USB_PORTSC		(PORT_PTS_UTMI | PORT_PTS_PTW)
 #define CONFIG_MXC_USB_FLAGS		0
-#define CONFIG_USB_MAX_CONTROLLER_COUNT	1 /* Only OTG1 port enabled */
 
-#define CONFIG_CI_UDC
 #define CONFIG_USBD_HS
-#define CONFIG_USB_GADGET_DUALSPEED
-#define CONFIG_USB_GADGET
 
-#define CONFIG_USB_FUNCTION_MASS_STORAGE
-#define CONFIG_USB_GADGET_DOWNLOAD
-#define CONFIG_USB_GADGET_VBUS_DRAW	2
+#define DFU_DEFAULT_POLL_TIMEOUT 300
 
-#define CONFIG_G_DNL_VENDOR_NUM		0x0525
-#define CONFIG_G_DNL_PRODUCT_NUM	0xa4a5
-#define CONFIG_G_DNL_MANUFACTURER	"FSL"
+#define CONFIG_DFU_ENV_SETTINGS \
+	"dfu_alt_info=" \
+		"spl raw 0x2 0x400;" \
+		"u-boot raw 0x8a 0x400;" \
+		"/boot/zImage ext4 0 1;" \
+		"/boot/imx6ul-pico-hobbit.dtb ext4 0 1;" \
+		"/boot/imx6ul-pico-pi.dtb ext4 0 1;" \
+		"rootfs part 0 1\0" \
 
-#define CONFIG_G_DNL_VENDOR_NUM		0x0525
-#define CONFIG_G_DNL_PRODUCT_NUM	0xa4a5
-#define CONFIG_G_DNL_MANUFACTURER	"FSL"
-
-#define CONFIG_DEFAULT_FDT_FILE		"imx6ul-pico-hobbit.dtb"
-
-#define CONFIG_SYS_MMC_IMG_LOAD_PART	1
+#define BOOTMENU_ENV \
+	"bootmenu_0=Boot using PICO-Dwarf baseboard=" \
+		"setenv fdtfile imx6ul-pico-dwarf.dtb\0" \
+	"bootmenu_1=Boot using PICO-Hobbit baseboard=" \
+		"setenv fdtfile imx6ul-pico-hobbit.dtb\0" \
+	"bootmenu_2=Boot using PICO-Pi baseboard=" \
+		"setenv fdtfile imx6ul-pico-pi.dtb\0" \
 
 #define CONFIG_EXTRA_ENV_SETTINGS \
+	"script=boot.scr\0" \
 	"image=zImage\0" \
+	"splashpos=m,m\0" \
 	"console=ttymxc5\0" \
 	"fdt_high=0xffffffff\0" \
 	"initrd_high=0xffffffff\0" \
-	"fdt_file=" CONFIG_DEFAULT_FDT_FILE "\0" \
+	"fdtfile=" CONFIG_DEFAULT_FDT_FILE "\0" \
+	"videomode=video=ctfb:x:800,y:480,depth:24,mode:0,pclk:30000,le:46,ri:210,up:22,lo:23,hs:20,vs:10,sync:0,vmode:0\0" \
+	BOOTMENU_ENV \
 	"fdt_addr=0x83000000\0" \
-	"mmcdev="__stringify(CONFIG_SYS_MMC_ENV_DEV)"\0" \
-	"mmcpart=" __stringify(CONFIG_SYS_MMC_IMG_LOAD_PART) "\0" \
-	"mmcroot=" CONFIG_MMCROOT " rootwait rw\0" \
+	"fdt_addr_r=0x83000000\0" \
+	"kernel_addr_r=" __stringify(CONFIG_SYS_LOAD_ADDR) "\0" \
+	"pxefile_addr_r=" __stringify(CONFIG_SYS_LOAD_ADDR) "\0" \
+	"ramdisk_addr_r=0x83000000\0" \
+	"ramdiskaddr=0x83000000\0" \
+	"scriptaddr=" __stringify(CONFIG_SYS_LOAD_ADDR) "\0" \
 	"mmcautodetect=yes\0" \
-	"mmcargs=setenv bootargs console=${console},${baudrate} " \
-		"root=${mmcroot}\0" \
-	"loadimage=fatload mmc ${mmcdev}:${mmcpart} ${loadaddr} ${image}\0" \
-	"loadfdt=fatload mmc ${mmcdev}:${mmcpart} ${fdt_addr} ${fdt_file}\0" \
-	"mmcboot=echo Booting from mmc ...; " \
-		"run mmcargs; " \
-		"if run loadfdt; then " \
-			"bootz ${loadaddr} - ${fdt_addr}; " \
-		"else " \
-			"echo WARN: Cannot load the DT; " \
-		"fi;\0"
+	CONFIG_DFU_ENV_SETTINGS \
+	"findfdt=" \
+		"if test $fdtfile = ask ; then " \
+			"bootmenu -1; fi;" \
+		"if test $fdtfile != ask ; then " \
+			"saveenv; fi;\0" \
+	"finduuid=part uuid mmc 0:1 uuid\0" \
+	"partitions=" \
+		"uuid_disk=${uuid_gpt_disk};" \
+		"name=rootfs,size=0,uuid=${uuid_gpt_rootfs}\0" \
+	"fastboot_partition_alias_system=rootfs\0" \
+	"setup_emmc=mmc dev 0; gpt write mmc 0 $partitions; reset;\0" \
+	BOOTENV
 
-#define CONFIG_BOOTCOMMAND \
-	   "if mmc rescan; then " \
-		   "if run loadimage; then " \
-			   "run mmcboot; " \
-		   "else run netboot; " \
-		   "fi; " \
-	   "else run netboot; fi"
+#define BOOT_TARGET_DEVICES(func) \
+	func(MMC, mmc, 0) \
+	func(USB, usb, 0) \
+	func(PXE, pxe, na) \
+	func(DHCP, dhcp, na)
 
-#define CONFIG_SYS_MEMTEST_START	0x80000000
-#define CONFIG_SYS_MEMTEST_END		CONFIG_SYS_MEMTEST_START + SZ_128M
-
-#define CONFIG_SYS_LOAD_ADDR		CONFIG_LOADADDR
-#define CONFIG_SYS_HZ			1000
-
-#define CONFIG_CMDLINE_EDITING
-#define CONFIG_STACKSIZE		SZ_128K
+#include <config_distro_bootcmd.h>
+#include <linux/stringify.h>
 
 /* Physical Memory Map */
-#define CONFIG_NR_DRAM_BANKS		1
 #define PHYS_SDRAM			MMDC0_ARB_BASE_ADDR
 
 #define CONFIG_SYS_SDRAM_BASE		PHYS_SDRAM
 #define CONFIG_SYS_INIT_RAM_ADDR	IRAM_BASE_ADDR
 #define CONFIG_SYS_INIT_RAM_SIZE	IRAM_SIZE
 
-#define CONFIG_SYS_INIT_SP_OFFSET \
-	(CONFIG_SYS_INIT_RAM_SIZE - GENERATED_GBL_DATA_SIZE)
-#define CONFIG_SYS_INIT_SP_ADDR \
-	(CONFIG_SYS_INIT_RAM_ADDR + CONFIG_SYS_INIT_SP_OFFSET)
-
-/* FLASH and environment organization */
-#define CONFIG_SYS_NO_FLASH
-
-#define CONFIG_ENV_SIZE			SZ_8K
-#define CONFIG_ENV_IS_IN_MMC
-#define CONFIG_ENV_OFFSET		(8 * SZ_64K)
-
-#define CONFIG_SYS_MMC_ENV_DEV		0
-#define CONFIG_SYS_MMC_ENV_PART		0
-#define CONFIG_MMCROOT			"/dev/mmcblk0p2"
+#ifdef CONFIG_VIDEO
+#define MXS_LCDIF_BASE MX6UL_LCDIF1_BASE_ADDR
+#endif
 
 #endif /* __PICO_IMX6UL_CONFIG_H */

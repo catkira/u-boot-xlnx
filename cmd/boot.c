@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000-2003
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -17,12 +16,12 @@
 /* Allow ports to override the default behavior */
 __attribute__((weak))
 unsigned long do_go_exec(ulong (*entry)(int, char * const []), int argc,
-				 char * const argv[])
+				 char *const argv[])
 {
 	return entry (argc, argv);
 }
 
-static int do_go(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_go(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	ulong	addr, rc;
 	int     rcode = 0;
@@ -30,9 +29,10 @@ static int do_go(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	if (argc < 2)
 		return CMD_RET_USAGE;
 
-	addr = simple_strtoul(argv[1], NULL, 16);
+	addr = hextoul(argv[1], NULL);
 
 	printf ("## Starting application at 0x%08lX ...\n", addr);
+	flush();
 
 	/*
 	 * pass address parameter as argv[0] (aka command name),
@@ -57,9 +57,10 @@ U_BOOT_CMD(
 #endif
 
 U_BOOT_CMD(
-	reset, 1, 0,	do_reset,
+	reset, 2, 0,	do_reset,
 	"Perform RESET of the CPU",
-	""
+	"- cold boot without level specifier\n"
+	"reset -w - warm reset if implemented"
 );
 
 #ifdef CONFIG_CMD_POWEROFF

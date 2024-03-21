@@ -1,19 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2015 Google, Inc
  * Copyright (c) 2011 The Chromium OS Authors.
  * Copyright (C) 2009 NVIDIA, Corporation
  * Copyright (C) 2007-2008 SMSC (Steve Glendinning)
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <log.h>
 #include <malloc.h>
 #include <memalign.h>
+#include <net.h>
 #include <usb.h>
 #include <asm/unaligned.h>
+#include <linux/delay.h>
 #include <linux/mii.h>
 #include "usb_ether.h"
 
@@ -391,8 +393,8 @@ static int smsc95xx_write_hwaddr_common(struct usb_device *udev,
 					struct smsc95xx_private *priv,
 					unsigned char *enetaddr)
 {
-	u32 addr_lo = __get_unaligned_le32(&enetaddr[0]);
-	u32 addr_hi = __get_unaligned_le16(&enetaddr[4]);
+	u32 addr_lo = get_unaligned_le32(&enetaddr[0]);
+	u32 addr_hi = get_unaligned_le16(&enetaddr[4]);
 	int ret;
 
 	/* set hardware address */
@@ -519,9 +521,11 @@ static int smsc95xx_init_common(struct usb_device *udev, struct ueth_data *dev,
 		debug("timeout waiting for PHY Reset\n");
 		return -ETIMEDOUT;
 	}
+#ifndef CONFIG_DM_ETH
 	if (!priv->have_hwaddr && smsc95xx_init_mac_address(enetaddr, udev) ==
 			0)
 		priv->have_hwaddr = 1;
+#endif
 	if (!priv->have_hwaddr) {
 		puts("Error: SMSC95xx: No MAC address set - set usbethaddr\n");
 		return -EADDRNOTAVAIL;
@@ -712,7 +716,7 @@ static int smsc95xx_send_common(struct ueth_data *dev, void *packet, int length)
 /*
  * Smsc95xx callbacks
  */
-static int smsc95xx_init(struct eth_device *eth, bd_t *bd)
+static int smsc95xx_init(struct eth_device *eth, struct bd_info *bd)
 {
 	struct ueth_data *dev = (struct ueth_data *)eth->priv;
 	struct usb_device *udev = dev->pusb_dev;
@@ -933,7 +937,7 @@ static int smsc95xx_eth_start(struct udevice *dev)
 {
 	struct usb_device *udev = dev_get_parent_priv(dev);
 	struct smsc95xx_private *priv = dev_get_priv(dev);
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 
 	/* Driver-model Ethernet ensures we have this */
 	priv->have_hwaddr = 1;
@@ -996,7 +1000,7 @@ int smsc95xx_eth_recv(struct udevice *dev, int flags, uchar **packetp)
 	}
 
 	*packetp = ptr + sizeof(packet_len);
-	return packet_len;
+	return packet_len - 4;
 
 err:
 	usb_ether_advance_rxbuf(ueth, -1);
@@ -1007,7 +1011,7 @@ static int smsc95xx_free_pkt(struct udevice *dev, uchar *packet, int packet_len)
 {
 	struct smsc95xx_private *priv = dev_get_priv(dev);
 
-	packet_len = ALIGN(packet_len, 4);
+	packet_len = ALIGN(packet_len + sizeof(u32), 4);
 	usb_ether_advance_rxbuf(&priv->ueth, sizeof(u32) + packet_len);
 
 	return 0;
@@ -1016,10 +1020,23 @@ static int smsc95xx_free_pkt(struct udevice *dev, uchar *packet, int packet_len)
 int smsc95xx_write_hwaddr(struct udevice *dev)
 {
 	struct usb_device *udev = dev_get_parent_priv(dev);
-	struct eth_pdata *pdata = dev_get_platdata(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
 	struct smsc95xx_private *priv = dev_get_priv(dev);
 
 	return smsc95xx_write_hwaddr_common(udev, priv, pdata->enetaddr);
+}
+
+int smsc95xx_read_rom_hwaddr(struct udevice *dev)
+{
+	struct usb_device *udev = dev_get_parent_priv(dev);
+	struct eth_pdata *pdata = dev_get_plat(dev);
+	int ret;
+
+	ret = smsc95xx_init_mac_address(pdata->enetaddr, udev);
+	if (ret)
+		memset(pdata->enetaddr, 0, 6);
+
+	return 0;
 }
 
 static int smsc95xx_eth_probe(struct udevice *dev)
@@ -1037,6 +1054,7 @@ static const struct eth_ops smsc95xx_eth_ops = {
 	.free_pkt = smsc95xx_free_pkt,
 	.stop	= smsc95xx_eth_stop,
 	.write_hwaddr = smsc95xx_write_hwaddr,
+	.read_rom_hwaddr = smsc95xx_read_rom_hwaddr,
 };
 
 U_BOOT_DRIVER(smsc95xx_eth) = {
@@ -1044,8 +1062,8 @@ U_BOOT_DRIVER(smsc95xx_eth) = {
 	.id	= UCLASS_ETH,
 	.probe = smsc95xx_eth_probe,
 	.ops	= &smsc95xx_eth_ops,
-	.priv_auto_alloc_size = sizeof(struct smsc95xx_private),
-	.platdata_auto_alloc_size = sizeof(struct eth_pdata),
+	.priv_auto	= sizeof(struct smsc95xx_private),
+	.plat_auto	= sizeof(struct eth_pdata),
 };
 
 static const struct usb_device_id smsc95xx_eth_id_table[] = {

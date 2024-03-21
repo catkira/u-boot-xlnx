@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2001
  * Denis Peter, MPL AG Switzerland
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Note: Part of this code has been derived from linux
  */
@@ -82,6 +81,32 @@
 #define EndpointOutRequest \
 	((USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_INTERFACE) << 8)
 
+/* class requests from the USB 2.0 hub spec, table 11-15 */
+#define HUB_CLASS_REQ(dir, type, request) ((((dir) | (type)) << 8) | (request))
+/* GetBusState and SetHubDescriptor are optional, omitted */
+#define ClearHubFeature		HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_HUB, \
+					      USB_REQ_CLEAR_FEATURE)
+#define ClearPortFeature	HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_PORT, \
+					      USB_REQ_CLEAR_FEATURE)
+#define GetHubDescriptor	HUB_CLASS_REQ(USB_DIR_IN, USB_RT_HUB, \
+					      USB_REQ_GET_DESCRIPTOR)
+#define GetHubStatus		HUB_CLASS_REQ(USB_DIR_IN, USB_RT_HUB, \
+					      USB_REQ_GET_STATUS)
+#define GetPortStatus		HUB_CLASS_REQ(USB_DIR_IN, USB_RT_PORT, \
+					      USB_REQ_GET_STATUS)
+#define SetHubFeature		HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_HUB, \
+					      USB_REQ_SET_FEATURE)
+#define SetPortFeature		HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_PORT, \
+					      USB_REQ_SET_FEATURE)
+#define ClearTTBuffer		HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_PORT, \
+					      HUB_CLEAR_TT_BUFFER)
+#define ResetTT			HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_PORT, \
+					      HUB_RESET_TT)
+#define GetTTState		HUB_CLASS_REQ(USB_DIR_IN, USB_RT_PORT, \
+					      HUB_GET_TT_STATE)
+#define StopTT			HUB_CLASS_REQ(USB_DIR_OUT, USB_RT_PORT, \
+					      HUB_STOP_TT)
+
 /* Descriptor types */
 #define USB_DT_DEVICE        0x01
 #define USB_DT_CONFIG        0x02
@@ -93,6 +118,7 @@
 #define USB_DT_REPORT       (USB_TYPE_CLASS | 0x02)
 #define USB_DT_PHYSICAL     (USB_TYPE_CLASS | 0x03)
 #define USB_DT_HUB          (USB_TYPE_CLASS | 0x09)
+#define USB_DT_SS_HUB       (USB_TYPE_CLASS | 0x0a)
 
 /* Descriptor sizes per descriptor type */
 #define USB_DT_DEVICE_SIZE      18
@@ -261,12 +287,17 @@
 
 /*
  * Changes to wPortStatus bit field in USB 3.0
- * See USB 3.0 spec Table 10-11
+ * See USB 3.0 spec Table 10-10
  */
 #define USB_SS_PORT_STAT_LINK_STATE	0x01e0
 #define USB_SS_PORT_STAT_POWER		0x0200
 #define USB_SS_PORT_STAT_SPEED		0x1c00
 #define USB_SS_PORT_STAT_SPEED_5GBPS	0x0000
+/* Bits that are the same from USB 2.0 */
+#define USB_SS_PORT_STAT_MASK		(USB_PORT_STAT_CONNECTION | \
+					 USB_PORT_STAT_ENABLE | \
+					 USB_PORT_STAT_OVERCURRENT | \
+					 USB_PORT_STAT_RESET)
 
 /* wPortChange bits */
 #define USB_PORT_STAT_C_CONNECTION  0x0001
@@ -284,9 +315,16 @@
 #define USB_SS_PORT_STAT_C_CONFIG_ERROR	0x0080
 
 /* wHubCharacteristics (masks) */
+#define HUB_CHAR_COMMON_OCPM        0x0000 /* All ports Over-Current reporting */
+#define HUB_CHAR_INDV_PORT_LPSM     0x0001 /* per-port power control */
+#define HUB_CHAR_NO_LPSM            0x0002 /* no power switching */
 #define HUB_CHAR_LPSM               0x0003
 #define HUB_CHAR_COMPOUND           0x0004
+#define HUB_CHAR_INDV_PORT_OCPM     0x0008 /* per-port Over-current reporting */
+#define HUB_CHAR_NO_OCPM            0x0010 /* No Over-current Protection support */
 #define HUB_CHAR_OCPM               0x0018
+#define HUB_CHAR_TTTT               0x0060 /* TT Think Time mask */
+#define HUB_CHAR_PORTIND            0x0080 /* per-port indicators (LEDs) */
 
 /*
  * Hub Status & Hub Change bit masks
@@ -299,6 +337,20 @@
 
 /* Mask for wIndex in get/set port feature */
 #define USB_HUB_PORT_MASK	0xf
+
+/* Hub class request codes */
+#define USB_REQ_SET_HUB_DEPTH	0x0c
+
+/*
+ * As of USB 2.0, full/low speed devices are segregated into trees.
+ * One type grows from USB 1.1 host controllers (OHCI, UHCI etc).
+ * The other type grows from high speed hubs when they connect to
+ * full/low speed devices using "Transaction Translators" (TTs).
+ */
+struct usb_tt {
+	bool		multi;		/* true means one TT per port */
+	unsigned	think_time;	/* think time in ns */
+};
 
 /*
  * CBI style

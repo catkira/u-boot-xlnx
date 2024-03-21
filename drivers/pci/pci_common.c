@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2014 Google, Inc
  *
@@ -6,12 +7,11 @@
  *
  * (C) Copyright 2002, 2003
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
+#include <env.h>
 #include <errno.h>
 #include <pci.h>
 #include <asm/io.h>
@@ -89,7 +89,7 @@ __weak int pci_skip_dev(struct pci_controller *hose, pci_dev_t dev)
 		/*
 		 * Only skip configuration if "pciconfighost" is not set
 		 */
-		if (getenv("pciconfighost") == NULL)
+		if (env_get("pciconfighost") == NULL)
 			return 1;
 #else
 		return 1;
@@ -99,7 +99,7 @@ __weak int pci_skip_dev(struct pci_controller *hose, pci_dev_t dev)
 	return 0;
 }
 
-#if !defined(CONFIG_DM_PCI) || defined(CONFIG_DM_PCI_COMPAT)
+#if defined(CONFIG_DM_PCI_COMPAT)
 /* Get a virtual address associated with a BAR region */
 void *pci_map_bar(pci_dev_t pdev, int bar, int flags)
 {
@@ -181,11 +181,6 @@ phys_addr_t pci_hose_bus_to_phys(struct pci_controller *hose,
 		return phys_addr;
 	}
 
-#ifdef CONFIG_DM_PCI
-	/* The root controller has the region information */
-	hose = pci_bus_to_hose(0);
-#endif
-
 	/*
 	 * if PCI_REGION_MEM is set we do a two pass search with preference
 	 * on matches that don't have PCI_REGION_SYS_MEMORY set
@@ -236,6 +231,13 @@ int __pci_hose_phys_to_bus(struct pci_controller *hose,
 	return 1;
 }
 
+/*
+ * pci_hose_phys_to_bus(): Convert physical address to bus address
+ * @hose:	PCI hose of the root PCI controller
+ * @phys_addr:	physical address to convert
+ * @flags:	flags of pci regions
+ * Return: bus address if OK, 0 on error
+ */
 pci_addr_t pci_hose_phys_to_bus(struct pci_controller *hose,
 				phys_addr_t phys_addr,
 				unsigned long flags)
@@ -247,11 +249,6 @@ pci_addr_t pci_hose_phys_to_bus(struct pci_controller *hose,
 		puts("pci_hose_phys_to_bus: invalid hose\n");
 		return bus_addr;
 	}
-
-#ifdef CONFIG_DM_PCI
-	/* The root controller has the region information */
-	hose = pci_bus_to_hose(0);
-#endif
 
 	/*
 	 * if PCI_REGION_MEM is set we do a two pass search with preference
@@ -364,4 +361,4 @@ pci_dev_t pci_find_class(uint find_class, int index)
 
 	return -ENODEV;
 }
-#endif /* !CONFIG_DM_PCI || CONFIG_DM_PCI_COMPAT */
+#endif /* CONFIG_DM_PCI_COMPAT */

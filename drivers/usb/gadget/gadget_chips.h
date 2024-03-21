@@ -32,12 +32,6 @@
 #define	gadget_is_dummy(g)	0
 #endif
 
-#ifdef CONFIG_USB_GADGET_PXA2XX
-#define	gadget_is_pxa(g)	(!strcmp("pxa2xx_udc", (g)->name))
-#else
-#define	gadget_is_pxa(g)	0
-#endif
-
 #ifdef CONFIG_USB_GADGET_GOKU
 #define	gadget_is_goku(g)	(!strcmp("goku_udc", (g)->name))
 #else
@@ -49,13 +43,6 @@
 #define	gadget_is_sh(g)		(!strcmp("sh_udc", (g)->name))
 #else
 #define	gadget_is_sh(g)		0
-#endif
-
-/* not yet stable on 2.6 (would help "original Zaurus") */
-#ifdef CONFIG_USB_GADGET_SA1100
-#define	gadget_is_sa1100(g)	(!strcmp("sa1100_udc", (g)->name))
-#else
-#define	gadget_is_sa1100(g)	0
 #endif
 
 /* handhelds.org tree (?) */
@@ -78,23 +65,10 @@
 #define	gadget_is_n9604(g)	0
 #endif
 
-/* various unstable versions available */
-#ifdef CONFIG_USB_GADGET_PXA27X
-#define	gadget_is_pxa27x(g)	(!strcmp("pxa27x_udc", (g)->name))
-#else
-#define	gadget_is_pxa27x(g)	0
-#endif
-
 #ifdef CONFIG_USB_GADGET_ATMEL_USBA
 #define gadget_is_atmel_usba(g)	(!strcmp("atmel_usba_udc", (g)->name))
 #else
 #define gadget_is_atmel_usba(g)	0
-#endif
-
-#ifdef CONFIG_USB_GADGET_S3C2410
-#define gadget_is_s3c2410(g)    (!strcmp("s3c2410_udc", (g)->name))
-#else
-#define gadget_is_s3c2410(g)    0
 #endif
 
 #ifdef CONFIG_USB_GADGET_AT91
@@ -131,13 +105,6 @@
 #define gadget_is_musbhdrc(g)	0
 #endif
 
-/* from Montavista kernel (?) */
-#ifdef CONFIG_USB_GADGET_MPC8272
-#define gadget_is_mpc8272(g)	(!strcmp("mpc8272_udc", (g)->name))
-#else
-#define gadget_is_mpc8272(g)	0
-#endif
-
 #ifdef CONFIG_USB_GADGET_M66592
 #define	gadget_is_m66592(g)	(!strcmp("m66592_udc", (g)->name))
 #else
@@ -162,13 +129,29 @@
 #define gadget_is_dwc3(g)        0
 #endif
 
+#ifdef CONFIG_USB_CDNS3_GADGET
+#define gadget_is_cdns3(g)        (!strcmp("cdns3-gadget", (g)->name))
+#else
+#define gadget_is_cdns3(g)        0
+#endif
 
+#ifdef CONFIG_USB_GADGET_MAX3420
+#define gadget_is_max3420(g)        (!strcmp("max3420-udc", (g)->name))
+#else
+#define gadget_is_max3420(g)        0
+#endif
 
-/*
- * CONFIG_USB_GADGET_SX2
- * CONFIG_USB_GADGET_AU1X00
- * ...
- */
+#ifdef CONFIG_USB_MTU3_GADGET
+#define gadget_is_mtu3(g)        (!strcmp("mtu3-gadget", (g)->name))
+#else
+#define gadget_is_mtu3(g)        0
+#endif
+
+#ifdef CONFIG_USB_GADGET_DWC2_OTG
+#define gadget_is_dwc2(g)        (!strcmp("dwc2-udc", (g)->name))
+#else
+#define gadget_is_dwc2(g)        0
+#endif
 
 /**
  * usb_gadget_controller_number - support bcdDevice id convention
@@ -191,12 +174,8 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x01;
 	else if (gadget_is_dummy(gadget))
 		return 0x02;
-	else if (gadget_is_pxa(gadget))
-		return 0x03;
 	else if (gadget_is_sh(gadget))
 		return 0x04;
-	else if (gadget_is_sa1100(gadget))
-		return 0x05;
 	else if (gadget_is_goku(gadget))
 		return 0x06;
 	else if (gadget_is_mq11xx(gadget))
@@ -205,10 +184,6 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x08;
 	else if (gadget_is_n9604(gadget))
 		return 0x09;
-	else if (gadget_is_pxa27x(gadget))
-		return 0x10;
-	else if (gadget_is_s3c2410(gadget))
-		return 0x11;
 	else if (gadget_is_at91(gadget))
 		return 0x12;
 	else if (gadget_is_imx(gadget))
@@ -217,8 +192,6 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x14;
 	else if (gadget_is_musbhdrc(gadget))
 		return 0x15;
-	else if (gadget_is_mpc8272(gadget))
-		return 0x16;
 	else if (gadget_is_atmel_usba(gadget))
 		return 0x17;
 	else if (gadget_is_fsl_usb2(gadget))
@@ -231,5 +204,15 @@ static inline int usb_gadget_controller_number(struct usb_gadget *gadget)
 		return 0x21;
 	else if (gadget_is_fotg210(gadget))
 		return 0x22;
+	else if (gadget_is_dwc3(gadget))
+		return 0x23;
+	else if (gadget_is_cdns3(gadget))
+		return 0x24;
+	else if (gadget_is_max3420(gadget))
+		return 0x25;
+	else if (gadget_is_mtu3(gadget))
+		return 0x26;
+	else if (gadget_is_dwc2(gadget))
+		return 0x27;
 	return -ENOENT;
 }

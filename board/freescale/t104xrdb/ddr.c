@@ -1,17 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2013 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright 2021 NXP
  */
 
 #include <common.h>
 #include <i2c.h>
 #include <hwconfig.h>
+#include <init.h>
+#include <log.h>
+#include <asm/global_data.h>
 #include <asm/mmu.h>
 #include <fsl_ddr_sdram.h>
 #include <fsl_ddr_dimm_params.h>
 #include <asm/fsl_law.h>
 #include <asm/mpc85xx_gpio.h>
+#include <linux/delay.h>
 #include "ddr.h"
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -77,7 +81,10 @@ found:
 	 */
 #ifdef CONFIG_SYS_FSL_DDR4
 	popts->half_strength_driver_enable = 1;
+	/* optimize cpo for erratum A-009942 */
+	popts->cpo_sample = 0x59;
 #else
+	popts->cpo_sample = 0x54;
 	popts->half_strength_driver_enable = 0;
 #endif
 	/*
@@ -118,7 +125,7 @@ void board_mem_sleep_setup(void)
 }
 #endif
 
-phys_size_t initdram(int board_type)
+int dram_init(void)
 {
 	phys_size_t dram_size;
 
@@ -135,5 +142,7 @@ phys_size_t initdram(int board_type)
 	fsl_dp_resume();
 #endif
 
-	return dram_size;
+	gd->ram_size = dram_size;
+
+	return 0;
 }

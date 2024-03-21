@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Samsung Electronics
  * Przemyslaw Marczak <p.marczak@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <common.h>
 #include <errno.h>
@@ -22,7 +21,7 @@ int exynos_adc_channel_data(struct udevice *dev, int channel,
 	struct exynos_adc_v2 *regs = priv->regs;
 
 	if (channel != priv->active_channel) {
-		error("Requested channel is not active!");
+		pr_err("Requested channel is not active!");
 		return -EINVAL;
 	}
 
@@ -63,7 +62,7 @@ int exynos_adc_stop(struct udevice *dev)
 
 	/* Stop conversion */
 	cfg = readl(&regs->con1);
-	cfg |= ~ADC_V2_CON1_STC_EN;
+	cfg &= ~ADC_V2_CON1_STC_EN;
 
 	writel(cfg, &regs->con1);
 
@@ -80,7 +79,7 @@ int exynos_adc_probe(struct udevice *dev)
 
 	/* Check HW version */
 	if (readl(&regs->version) != ADC_V2_VERSION) {
-		error("This driver supports only ADC v2!");
+		pr_err("This driver supports only ADC v2!");
 		return -ENXIO;
 	}
 
@@ -102,14 +101,14 @@ int exynos_adc_probe(struct udevice *dev)
 	return 0;
 }
 
-int exynos_adc_ofdata_to_platdata(struct udevice *dev)
+int exynos_adc_of_to_plat(struct udevice *dev)
 {
-	struct adc_uclass_platdata *uc_pdata = dev_get_uclass_platdata(dev);
+	struct adc_uclass_plat *uc_pdata = dev_get_uclass_plat(dev);
 	struct exynos_adc_priv *priv = dev_get_priv(dev);
 
-	priv->regs = (struct exynos_adc_v2 *)dev_get_addr(dev);
+	priv->regs = dev_read_addr_ptr(dev);
 	if (priv->regs == (struct exynos_adc_v2 *)FDT_ADDR_T_NONE) {
-		error("Dev: %s - can't get address!", dev->name);
+		pr_err("Dev: %s - can't get address!", dev->name);
 		return -ENODATA;
 	}
 
@@ -140,6 +139,6 @@ U_BOOT_DRIVER(exynos_adc) = {
 	.of_match	= exynos_adc_ids,
 	.ops		= &exynos_adc_ops,
 	.probe		= exynos_adc_probe,
-	.ofdata_to_platdata = exynos_adc_ofdata_to_platdata,
-	.priv_auto_alloc_size = sizeof(struct exynos_adc_priv),
+	.of_to_plat = exynos_adc_of_to_plat,
+	.priv_auto	= sizeof(struct exynos_adc_priv),
 };

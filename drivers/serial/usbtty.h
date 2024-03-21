@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2003
  * Gerry Hamel, geh@ti.com, Texas Instruments
  *
  * (C) Copyright 2006
  * Bryan O'Donoghue, bodonoghue@codehermit.ie, CodeHermit
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __USB_TTY_H__
@@ -14,10 +13,6 @@
 #include <usbdevice.h>
 #if defined(CONFIG_PPC)
 #include <usb/mpc8xx_udc.h>
-#elif defined(CONFIG_CPU_PXA27X)
-#include <usb/pxa27x_udc.h>
-#elif defined(CONFIG_DW_UDC)
-#include <usb/designware_udc.h>
 #elif defined(CONFIG_CI_UDC)
 #include <usb/ci_udc.h>
 #endif

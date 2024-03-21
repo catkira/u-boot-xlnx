@@ -1,16 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2015 Google, Inc
  * Written by Simon Glass <sjg@chromium.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
+
+#define LOG_CATEGORY UCLASS_PCH
 
 #include <common.h>
 #include <dm.h>
 #include <pch.h>
-#include <dm/root.h>
-
-DECLARE_GLOBAL_DATA_PTR;
 
 int pch_get_spi_base(struct udevice *dev, ulong *sbasep)
 {
@@ -55,20 +53,20 @@ int pch_get_io_base(struct udevice *dev, u32 *iobasep)
 	return ops->get_io_base(dev, iobasep);
 }
 
-static int pch_uclass_post_bind(struct udevice *bus)
+int pch_ioctl(struct udevice *dev, ulong req, void *data, int size)
 {
-	/*
-	 * Scan the device tree for devices
-	 *
-	 * Before relocation, only bind devices marked for pre-relocation
-	 * use.
-	 */
-	return dm_scan_fdt_node(bus, gd->fdt_blob, bus->of_offset,
-				gd->flags & GD_FLG_RELOC ? false : true);
+	struct pch_ops *ops = pch_get_ops(dev);
+
+	if (!ops->ioctl)
+		return -ENOSYS;
+
+	return ops->ioctl(dev, req, data, size);
 }
 
 UCLASS_DRIVER(pch) = {
 	.id		= UCLASS_PCH,
 	.name		= "pch",
-	.post_bind	= pch_uclass_post_bind,
+#if CONFIG_IS_ENABLED(OF_REAL)
+	.post_bind	= dm_scan_fdt_dev,
+#endif
 };

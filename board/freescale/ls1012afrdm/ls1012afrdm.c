@@ -1,159 +1,156 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright 2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright 2017-2018, 2021 NXP
  */
 
 #include <common.h>
+#include <fdt_support.h>
 #include <i2c.h>
+#include <asm/cache.h>
+#include <init.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/fsl_serdes.h>
+#ifdef CONFIG_FSL_LS_PPA
+#include <asm/arch/ppa.h>
+#endif
+#include <asm/arch/mmu.h>
 #include <asm/arch/soc.h>
+#include <fsl_esdhc.h>
 #include <hwconfig.h>
-#include <fsl_csu.h>
-#include <environment.h>
+#include <env_internal.h>
 #include <fsl_mmdc.h>
 #include <netdev.h>
+#include <net/pfe_eth/pfe/pfe_hw.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
-static void set_wait_for_bits_clear(void *ptr, u32 value, u32 bits)
+static inline int get_board_version(void)
 {
-	int timeout = 1000;
+	uint32_t val;
+#ifdef CONFIG_TARGET_LS1012AFRDM
+	val = 0;
+#else
+	struct ccsr_gpio *pgpio = (void *)(GPIO2_BASE_ADDR);
 
-	out_be32(ptr, value);
+	val = in_be32(&pgpio->gpdat) & BOARD_REV_MASK;/*Get GPIO2 11,12,14*/
 
-	while (in_be32(ptr) & bits) {
-		udelay(100);
-		timeout--;
-	}
-	if (timeout <= 0)
-		puts("Error: wait for clear timeout.\n");
+#endif
+	return val;
 }
 
 int checkboard(void)
 {
+#ifdef CONFIG_TARGET_LS1012AFRDM
 	puts("Board: LS1012AFRDM ");
+#else
+	int rev;
+
+	rev = get_board_version();
+
+	puts("Board: FRWY-LS1012A ");
+
+	puts("Version");
+
+	switch (rev) {
+	case BOARD_REV_A_B:
+		puts(": RevA/B ");
+		break;
+	case BOARD_REV_C:
+		puts(": RevC ");
+		break;
+	default:
+		puts(": unknown");
+		break;
+	}
+#endif
 
 	return 0;
 }
 
-void mmdc_init(void)
+#ifdef CONFIG_TARGET_LS1012AFRWY
+int esdhc_status_fixup(void *blob, const char *compat)
 {
-	struct mmdc_p_regs *mmdc =
-		(struct mmdc_p_regs *)CONFIG_SYS_FSL_DDR_ADDR;
+	char esdhc0_path[] = "/soc/esdhc@1560000";
+	char esdhc1_path[] = "/soc/esdhc@1580000";
 
-	out_be32(&mmdc->mdscr, CONFIGURATION_REQ);
+	do_fixup_by_path(blob, esdhc0_path, "status", "okay",
+			 sizeof("okay"), 1);
 
-	/* configure timing parms */
-	out_be32(&mmdc->mdotc,  CONFIG_SYS_MMDC_CORE_ODT_TIMING);
-	out_be32(&mmdc->mdcfg0, CONFIG_SYS_MMDC_CORE_TIMING_CFG_0);
-	out_be32(&mmdc->mdcfg1, CONFIG_SYS_MMDC_CORE_TIMING_CFG_1);
-	out_be32(&mmdc->mdcfg2, CONFIG_SYS_MMDC_CORE_TIMING_CFG_2);
-
-	/* other parms	*/
-	out_be32(&mmdc->mdmisc,    CONFIG_SYS_MMDC_CORE_MISC);
-	out_be32(&mmdc->mpmur0,    CONFIG_SYS_MMDC_PHY_MEASURE_UNIT);
-	out_be32(&mmdc->mdrwd,     CONFIG_SYS_MMDC_CORE_RDWR_CMD_DELAY);
-	out_be32(&mmdc->mpodtctrl, CONFIG_SYS_MMDC_PHY_ODT_CTRL);
-
-	/* out of reset delays */
-	out_be32(&mmdc->mdor,  CONFIG_SYS_MMDC_CORE_OUT_OF_RESET_DELAY);
-
-	/* physical parms */
-	out_be32(&mmdc->mdctl, CONFIG_SYS_MMDC_CORE_CONTROL_1);
-	out_be32(&mmdc->mdasp, CONFIG_SYS_MMDC_CORE_ADDR_PARTITION);
-
-       /* Enable MMDC */
-	out_be32(&mmdc->mdctl, CONFIG_SYS_MMDC_CORE_CONTROL_2);
-
-	/* dram init sequence: update MRs */
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x8) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_2));
-	out_be32(&mmdc->mdscr, (CONFIGURATION_REQ | CMD_LOAD_MODE_REG |
-				CMD_BANK_ADDR_3));
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x4) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_1));
-	out_be32(&mmdc->mdscr, (CMD_ADDR_MSB_MR_OP(0x19) |
-				CMD_ADDR_LSB_MR_ADDR(0x30) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_0));
-
-       /* dram init sequence: ZQCL */
-	out_be32(&mmdc->mdscr, (CMD_ADDR_MSB_MR_OP(0x4) | CONFIGURATION_REQ |
-				CMD_ZQ_CALIBRATION | CMD_BANK_ADDR_0));
-	set_wait_for_bits_clear(&mmdc->mpzqhwctrl,
-				CONFIG_SYS_MMDC_PHY_ZQ_HW_CTRL,
-				FORCE_ZQ_AUTO_CALIBRATION);
-
-       /* Calibrations now: wr lvl */
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x84) |
-				CONFIGURATION_REQ | CMD_LOAD_MODE_REG |
-				CMD_BANK_ADDR_1));
-	out_be32(&mmdc->mdscr, (CONFIGURATION_REQ | WL_EN | CMD_NORMAL));
-	set_wait_for_bits_clear(&mmdc->mpwlgcr, WR_LVL_HW_EN, WR_LVL_HW_EN);
-
-	mdelay(1);
-
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x4) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_1));
-	out_be32(&mmdc->mdscr, CONFIGURATION_REQ);
-
-	mdelay(1);
-
-       /* Calibrations now: Read DQS gating calibration */
-	out_be32(&mmdc->mdscr, (CMD_ADDR_MSB_MR_OP(0x4) | CONFIGURATION_REQ |
-				CMD_PRECHARGE_BANK_OPEN | CMD_BANK_ADDR_0));
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x4) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_3));
-	out_be32(&mmdc->mppdcmpr2, MPR_COMPARE_EN);
-	out_be32(&mmdc->mprddlctl, CONFIG_SYS_MMDC_PHY_RD_DLY_LINES_CFG);
-	set_wait_for_bits_clear(&mmdc->mpdgctrl0,
-				AUTO_RD_DQS_GATING_CALIBRATION_EN,
-				AUTO_RD_DQS_GATING_CALIBRATION_EN);
-
-	out_be32(&mmdc->mdscr, (CONFIGURATION_REQ | CMD_LOAD_MODE_REG |
-				CMD_BANK_ADDR_3));
-
-       /* Calibrations now: Read calibration */
-	out_be32(&mmdc->mdscr, (CMD_ADDR_MSB_MR_OP(0x4) | CONFIGURATION_REQ |
-				CMD_PRECHARGE_BANK_OPEN | CMD_BANK_ADDR_0));
-	out_be32(&mmdc->mdscr, (CMD_ADDR_LSB_MR_ADDR(0x4) | CONFIGURATION_REQ |
-				CMD_LOAD_MODE_REG | CMD_BANK_ADDR_3));
-	out_be32(&mmdc->mppdcmpr2,  MPR_COMPARE_EN);
-	set_wait_for_bits_clear(&mmdc->mprddlhwctl,
-				AUTO_RD_CALIBRATION_EN,
-				AUTO_RD_CALIBRATION_EN);
-
-	out_be32(&mmdc->mdscr, (CONFIGURATION_REQ | CMD_LOAD_MODE_REG |
-				CMD_BANK_ADDR_3));
-
-       /* PD, SR */
-	out_be32(&mmdc->mdpdc, CONFIG_SYS_MMDC_CORE_PWR_DOWN_CTRL);
-	out_be32(&mmdc->mapsr, CONFIG_SYS_MMDC_CORE_PWR_SAV_CTRL_STAT);
-
-       /* refresh scheme */
-	set_wait_for_bits_clear(&mmdc->mdref,
-				CONFIG_SYS_MMDC_CORE_REFRESH_CTL,
-				START_REFRESH);
-
-       /* disable CON_REQ */
-	out_be32(&mmdc->mdscr, DISABLE_CFG_REQ);
+	do_fixup_by_path(blob, esdhc1_path, "status", "disabled",
+			 sizeof("disabled"), 1);
+	return 0;
 }
+#endif
 
+#ifdef CONFIG_TFABOOT
 int dram_init(void)
 {
-	mmdc_init();
+#ifdef CONFIG_TARGET_LS1012AFRWY
+	int board_rev;
+#endif
 
+	gd->ram_size = tfa_get_dram_size();
+
+	if (!gd->ram_size) {
+#ifdef CONFIG_TARGET_LS1012AFRWY
+		board_rev = get_board_version();
+
+		if (board_rev & BOARD_REV_C)
+			gd->ram_size = SYS_SDRAM_SIZE_1024;
+		else
+			gd->ram_size = SYS_SDRAM_SIZE_512;
+#else
+		gd->ram_size = CONFIG_SYS_SDRAM_SIZE;
+#endif
+	}
+	return 0;
+}
+#else
+int dram_init(void)
+{
+#ifdef CONFIG_TARGET_LS1012AFRWY
+	int board_rev;
+#endif
+	struct fsl_mmdc_info mparam = {
+		0x04180000,	/* mdctl */
+		0x00030035,	/* mdpdc */
+		0x12554000,	/* mdotc */
+		0xbabf7954,	/* mdcfg0 */
+		0xdb328f64,	/* mdcfg1 */
+		0x01ff00db,	/* mdcfg2 */
+		0x00001680,	/* mdmisc */
+		0x0f3c8000,	/* mdref */
+		0x00002000,	/* mdrwd */
+		0x00bf1023,	/* mdor */
+		0x0000003f,	/* mdasp */
+		0x0000022a,	/* mpodtctrl */
+		0xa1390003,	/* mpzqhwctrl */
+	};
+
+#ifdef CONFIG_TARGET_LS1012AFRWY
+	board_rev = get_board_version();
+
+	if (board_rev == BOARD_REV_C) {
+		mparam.mdctl = 0x05180000;
+		gd->ram_size = SYS_SDRAM_SIZE_1024;
+	} else {
+		gd->ram_size = SYS_SDRAM_SIZE_512;
+	}
+#else
 	gd->ram_size = CONFIG_SYS_SDRAM_SIZE;
+#endif
+	mmdc_init(&mparam);
+
+#if !defined(CONFIG_SPL) || defined(CONFIG_SPL_BUILD)
+	/* This will break-before-make MMU for DDR */
+	update_early_mmu_table();
+#endif
 
 	return 0;
 }
-
-int board_eth_init(bd_t *bis)
-{
-	return pci_eth_init(bis);
-}
+#endif
 
 int board_early_init_f(void)
 {
@@ -164,25 +161,30 @@ int board_early_init_f(void)
 
 int board_init(void)
 {
-	struct ccsr_cci400 *cci = (struct ccsr_cci400 *)CONFIG_SYS_CCI400_ADDR;
+	struct ccsr_cci400 *cci = (struct ccsr_cci400 *)(CONFIG_SYS_IMMR +
+					CONFIG_SYS_CCI400_OFFSET);
+
 	/*
 	 * Set CCI-400 control override register to enable barrier
 	 * transaction
 	 */
-	out_le32(&cci->ctrl_ord, CCI400_CTRLORD_EN_BARRIER);
+	if (current_el() == 3)
+		out_le32(&cci->ctrl_ord, CCI400_CTRLORD_EN_BARRIER);
 
-#ifdef CONFIG_ENV_IS_NOWHERE
-	gd->env_addr = (ulong)&default_environment[0];
+#ifdef CONFIG_FSL_LS_PPA
+	ppa_init();
 #endif
-
-#ifdef CONFIG_LAYERSCAPE_NS_ACCESS
-	enable_layerscape_ns_access();
-#endif
-
 	return 0;
 }
 
-int ft_board_setup(void *blob, bd_t *bd)
+#ifdef CONFIG_FSL_PFE
+void board_quiesce_devices(void)
+{
+	pfe_command_stop(0, NULL);
+}
+#endif
+
+int ft_board_setup(void *blob, struct bd_info *bd)
 {
 	arch_fixup_fdt(blob);
 

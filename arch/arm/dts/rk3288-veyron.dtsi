@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Google Veyron (and derivatives) board device tree source
  *
  * Copyright 2014 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <dt-bindings/clock/rockchip,rk808.h>
@@ -17,11 +16,6 @@
 
 	chosen {
 		stdout-path = &uart2;
-	};
-
-	config {
-		u-boot,dm-pre-reloc;
-		u-boot,boot0 = &spi_flash;
 	};
 
 	firmware {
@@ -84,8 +78,6 @@
 
 	gpio_keys: gpio-keys {
 		compatible = "gpio-keys";
-		#address-cells = <1>;
-		#size-cells = <0>;
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&pwr_key_h>;
@@ -227,36 +219,6 @@
 	cpu0-supply = <&vdd_cpu>;
 };
 
-&dmc {
-	logic-supply = <&vdd_logic>;
-	rockchip,odt-disable-freq = <333000000>;
-	rockchip,dll-disable-freq = <333000000>;
-	rockchip,sr-enable-freq = <333000000>;
-	rockchip,pd-enable-freq = <666000000>;
-	rockchip,auto-self-refresh-cnt = <0>;
-	rockchip,auto-power-down-cnt = <64>;
-	rockchip,ddr-speed-bin = <21>;
-	rockchip,trcd = <10>;
-	rockchip,trp = <10>;
-	operating-points = <
-		/* KHz    uV */
-		200000 1050000
-		333000 1100000
-		533000 1150000
-		666000 1200000
-	>;
-	rockchip,num-channels = <2>;
-	rockchip,pctl-timing = <0x29a 0xc8 0x1f4 0x42 0x4e 0x4 0xea 0xa
-		0x5 0x0 0xa 0x7 0x19 0x24 0xa 0x7
-		0x5 0xa 0x5 0x200 0x5 0x10 0x40 0x0
-		0x1 0x7 0x7 0x4 0xc 0x43 0x100 0x0
-		0x5 0x0>;
-	rockchip,phy-timing = <0x48f9aab4 0xea0910 0x1002c200
-		0xa60 0x40 0x10 0x0>;
-	rockchip,sdram-channel = /bits/ 8 <0x1 0xa 0x3 0x2 0x1 0x0 0xf 0xf>;
-	rockchip,sdram-params = <0x30B25564 0x627 3 666000000 3 9 1>;
-};
-
 &efuse {
 	status = "okay";
 };
@@ -316,11 +278,9 @@
 
 &spi2 {
 	status = "okay";
-	u-boot,dm-pre-reloc;
 
 	spi_flash: spiflash@0 {
-		u-boot,dm-pre-reloc;
-		compatible = "spidev", "spi-flash";
+		compatible = "spidev", "jedec,spi-nor";
 		spi-max-frequency = <20000000>; /* Reduce for Dediprog em100 pro */
 		reg = <0>;
 	};
@@ -332,7 +292,6 @@
 	clock-frequency = <400000>;
 	i2c-scl-falling-time-ns = <50>;		/* 2.5ns measured */
 	i2c-scl-rising-time-ns = <100>;		/* 45ns measured */
-	u-boot,dm-pre-reloc;
 
 	rk808: pmic@1b {
 		compatible = "rockchip,rk808";
@@ -345,7 +304,6 @@
 		rockchip,system-power-controller;
 		wakeup-source;
 		#clock-cells = <1>;
-		u-boot,dm-pre-reloc;
 
 		vcc1-supply = <&vcc33_sys>;
 		vcc2-supply = <&vcc33_sys>;
@@ -497,6 +455,7 @@
 	max98090: max98090@10 {
 		compatible = "maxim,max98090";
 		reg = <0x10>;
+		#sound-dai-cells = <0>;
 		interrupt-parent = <&gpio6>;
 		interrupts = <7 IRQ_TYPE_EDGE_FALLING>;
 		pinctrl-names = "default";
@@ -573,7 +532,6 @@
 
 &uart2 {
 	status = "okay";
-	u-boot,dm-pre-reloc;
 	reg-shift = <2>;
 };
 
@@ -602,10 +560,6 @@
 	status = "okay";
 };
 
-&hdmi_audio {
-	status = "okay";
-};
-
 &gpu {
 	status = "okay";
 };
@@ -617,7 +571,6 @@
 };
 
 &pinctrl {
-	u-boot,dm-pre-reloc;
 	pinctrl-names = "default", "sleep";
 	pinctrl-0 = <
 		/* Common for sleep and wake, but no owners */
@@ -841,16 +794,4 @@
 	status = "okay";
 	assigned-clocks = <&cru SCLK_USBPHY480M_SRC>;
 	assigned-clock-parents = <&cru SCLK_OTGPHY0>;
-};
-
-&sdmmc {
-	u-boot,dm-pre-reloc;
-};
-
-&gpio3 {
-	u-boot,dm-pre-reloc;
-};
-
-&gpio8 {
-	u-boot,dm-pre-reloc;
 };

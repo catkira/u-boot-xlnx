@@ -1,9 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * based on: cmd_jffs2.c
  *
- * 	Add support for a CRAMFS located in RAM
+ *	Add support for a CRAMFS located in RAM
  */
 
 
@@ -12,12 +12,16 @@
  */
 #include <common.h>
 #include <command.h>
+#include <env.h>
+#include <image.h>
 #include <malloc.h>
+#include <mapmem.h>
 #include <linux/list.h>
 #include <linux/ctype.h>
 #include <jffs2/jffs2.h>
 #include <jffs2/load_kernel.h>
 #include <cramfs/cramfs_fs.h>
+#include <asm/io.h>
 
 /* enable/disable debugging messages */
 #define	DEBUG_CRAMFS
@@ -29,15 +33,15 @@
 # define DEBUGF(fmt, args...)
 #endif
 
-#include <flash.h>
 
-#ifdef CONFIG_SYS_NO_FLASH
+#ifndef CONFIG_MTD_NOR_FLASH
 # define OFFSET_ADJUSTMENT	0
 #else
+#include <flash.h>
 # define OFFSET_ADJUSTMENT	(flash_info[id.num].start[0])
 #endif
 
-#ifndef CONFIG_CMD_JFFS2
+#ifndef CONFIG_FS_JFFS2
 #include <linux/stat.h>
 char *mkmodestr(unsigned long mode, char *str)
 {
@@ -68,7 +72,7 @@ char *mkmodestr(unsigned long mode, char *str)
 	str[10] = '\0';
 	return str;
 }
-#endif /* CONFIG_CMD_JFFS2 */
+#endif /* CONFIG_FS_JFFS2 */
 
 extern int cramfs_check (struct part_info *info);
 extern int cramfs_load (char *loadoffset, struct part_info *info, char *filename);
@@ -88,20 +92,22 @@ extern int cramfs_info (struct part_info *info);
  * @param flag command flag
  * @param argc number of arguments supplied to the command
  * @param argv arguments list
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
-int do_cramfs_load(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_cramfs_load(struct cmd_tbl *cmdtp, int flag, int argc,
+		   char *const argv[])
 {
 	char *filename;
 	int size;
-	ulong offset = load_addr;
+	ulong offset = image_load_addr;
+	char *offset_virt;
 
 	struct part_info part;
 	struct mtd_device dev;
 	struct mtdids id;
 
 	ulong addr;
-	addr = simple_strtoul(getenv("cramfsaddr"), NULL, 16);
+	addr = hextoul(env_get("cramfsaddr"), NULL);
 
 	/* hack! */
 	/* cramfs_* only supports NOR flash chips */
@@ -111,33 +117,37 @@ int do_cramfs_load(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	dev.id = &id;
 	part.dev = &dev;
 	/* fake the address offset */
-	part.offset = addr - OFFSET_ADJUSTMENT;
+	part.offset = (u64)(uintptr_t) map_sysmem(addr - OFFSET_ADJUSTMENT, 0);
 
 	/* pre-set Boot file name */
-	if ((filename = getenv("bootfile")) == NULL) {
+	filename = env_get("bootfile");
+	if (!filename)
 		filename = "uImage";
-	}
 
 	if (argc == 2) {
 		filename = argv[1];
 	}
 	if (argc == 3) {
 		offset = simple_strtoul(argv[1], NULL, 0);
-		load_addr = offset;
+		image_load_addr = offset;
 		filename = argv[2];
 	}
 
+	offset_virt = map_sysmem(offset, 0);
 	size = 0;
 	if (cramfs_check(&part))
-		size = cramfs_load ((char *) offset, &part, filename);
+		size = cramfs_load (offset_virt, &part, filename);
 
 	if (size > 0) {
 		printf("### CRAMFS load complete: %d bytes loaded to 0x%lx\n",
 			size, offset);
-		setenv_hex("filesize", size);
+		env_set_hex("filesize", size);
 	} else {
 		printf("### CRAMFS LOAD ERROR<%x> for %s!\n", size, filename);
 	}
+
+	unmap_sysmem(offset_virt);
+	unmap_sysmem((void *)(uintptr_t)part.offset);
 
 	return !(size > 0);
 }
@@ -151,9 +161,9 @@ int do_cramfs_load(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
  * @param flag command flag
  * @param argc number of arguments supplied to the command
  * @param argv arguments list
- * @return 0 on success, 1 otherwise
+ * Return: 0 on success, 1 otherwise
  */
-int do_cramfs_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+int do_cramfs_ls(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
 {
 	char *filename = "/";
 	int ret;
@@ -162,7 +172,7 @@ int do_cramfs_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	struct mtdids id;
 
 	ulong addr;
-	addr = simple_strtoul(getenv("cramfsaddr"), NULL, 16);
+	addr = hextoul(env_get("cramfsaddr"), NULL);
 
 	/* hack! */
 	/* cramfs_* only supports NOR flash chips */
@@ -172,7 +182,7 @@ int do_cramfs_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	dev.id = &id;
 	part.dev = &dev;
 	/* fake the address offset */
-	part.offset = addr - OFFSET_ADJUSTMENT;
+	part.offset = (u64)(uintptr_t) map_sysmem(addr - OFFSET_ADJUSTMENT, 0);
 
 	if (argc == 2)
 		filename = argv[1];
@@ -180,6 +190,7 @@ int do_cramfs_ls(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	ret = 0;
 	if (cramfs_check(&part))
 		ret = cramfs_ls (&part, filename);
+	unmap_sysmem((void *)(uintptr_t)part.offset);
 
 	return ret ? 0 : 1;
 }

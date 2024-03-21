@@ -1,18 +1,14 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015 Socionext Inc.
  *   Author: Masahiro Yamada <yamada.masahiro@socionext.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
+#include <config.h>
 #include <linux/linkage.h>
-
-#include "ssc-regs.h"
+#include <system-constants.h>
 
 ENTRY(lowlevel_init)
-	ldr	r1, = SSCC
-	ldr	r0, [r1]
-	bic	r0, r0, #SSCC_ON	@ L2 disable
-	str	r0, [r1]
-	mov	pc, lr
+	ldr	sp, = SYS_INIT_SP_ADDR
+	b	uniphier_cache_disable
 ENDPROC(lowlevel_init)

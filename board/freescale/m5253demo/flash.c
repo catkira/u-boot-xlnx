@@ -1,14 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2000-2003
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  *
  * Copyright (C) 2004-2007 Freescale Semiconductor, Inc.
  * TsiChung Liew (Tsi-Chung.Liew@freescale.com)
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <flash.h>
+#include <init.h>
+#include <irq_func.h>
 
 #include <asm/immap.h>
 
@@ -31,7 +33,7 @@ typedef volatile unsigned short FLASH_PORT_WIDTHV;
 ulong flash_get_size(FPWV * addr, flash_info_t * info);
 int flash_get_offsets(ulong base, flash_info_t * info);
 int write_word(flash_info_t * info, FPWV * dest, u16 data);
-void inline spin_wheel(void);
+static inline void spin_wheel(void);
 
 flash_info_t flash_info[CONFIG_SYS_MAX_FLASH_BANKS];
 
@@ -240,7 +242,8 @@ int flash_erase(flash_info_t * info, int s_first, int s_last)
 					count = 0;
 				}
 
-				if (get_timer(start) > CONFIG_SYS_FLASH_ERASE_TOUT) {
+				/* check timeout, 1000ms */
+				if (get_timer(start) > 1000) {
 					printf("Timeout\n");
 					*addr = 0x00F0;	/* reset to read mode */
 
@@ -292,8 +295,8 @@ int flash_erase(flash_info_t * info, int s_first, int s_last)
 						enable_interrupts();
 
 					while ((*addr & 0x0080) != 0x0080) {
-						if (get_timer(start) >
-						    CONFIG_SYS_FLASH_ERASE_TOUT) {
+						/* check timeout, 1000ms */
+						if (get_timer(start) > 1000) {
 							printf("Timeout\n");
 							*addr = 0x00F0;	/* reset to read mode */
 
@@ -428,7 +431,8 @@ int write_word(flash_info_t * info, FPWV * dest, u16 data)
 	/* data polling for D7 */
 	while (res == 0
 	       && (*dest & (u8) 0x00800080) != (data & (u8) 0x00800080)) {
-		if (get_timer(start) > CONFIG_SYS_FLASH_WRITE_TOUT) {
+		/* check timeout, 500ms */
+		if (get_timer(start) > 500) {
 			*dest = (u8) 0x00F000F0;	/* reset bank */
 			res = 1;
 		}
@@ -439,7 +443,7 @@ int write_word(flash_info_t * info, FPWV * dest, u16 data)
 	return (res);
 }
 
-void inline spin_wheel(void)
+static inline void spin_wheel(void)
 {
 	static int p = 0;
 	static char w[] = "\\/-";

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2004, 2007-2012 Freescale Semiconductor, Inc.
  * Copyright (C) 2003  Motorola,Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /* U-Boot Startup Code for Motorola 85xx PowerPC based Embedded Boards
@@ -15,7 +14,7 @@
 #include <asm-offsets.h>
 #include <config.h>
 #include <mpc85xx.h>
-#include <version.h>
+#include <system-constants.h>
 
 #include <ppc_asm.tmpl>
 #include <ppc_defs.h>
@@ -29,12 +28,12 @@
 #define LAW_EN		0x80000000
 
 #if defined(CONFIG_NAND_SPL) || \
-	(defined(CONFIG_SPL_BUILD) && defined(CONFIG_SPL_INIT_MINIMAL))
+	(defined(CONFIG_SPL_BUILD) && CONFIG_IS_ENABLED(INIT_MINIMAL))
 #define MINIMAL_SPL
 #endif
 
 #if !defined(CONFIG_SPL) && !defined(CONFIG_SYS_RAMBOOT) && \
-	!defined(CONFIG_SECURE_BOOT) && !defined(CONFIG_SRIO_PCIE_BOOT_SLAVE)
+	!defined(CONFIG_NXP_ESBC) && !defined(CONFIG_SRIO_PCIE_BOOT_SLAVE)
 #define NOR_BOOT
 #endif
 
@@ -48,7 +47,6 @@
 	GOT_ENTRY(_FIXUP_TABLE_)
 
 #ifndef MINIMAL_SPL
-	GOT_ENTRY(_start)
 	GOT_ENTRY(_start_of_vectors)
 	GOT_ENTRY(_end_of_vectors)
 	GOT_ENTRY(transfer_to_handler)
@@ -58,6 +56,100 @@
 	GOT_ENTRY(__bss_end)
 	GOT_ENTRY(__bss_start)
 	END_GOT
+
+#ifdef CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR
+#if !defined(CONFIG_SPL) || defined(CONFIG_SPL_BUILD)
+
+/* Maximal size of the image */
+#ifdef CONFIG_SPL_BUILD
+#define MAX_IMAGE_SIZE (CONFIG_SPL_MAX_SIZE - (CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR_DATA * 512))
+#else
+#define MAX_IMAGE_SIZE CONFIG_SYS_L2_SIZE
+#endif
+
+#if defined(CONFIG_SPL_BUILD) && CONFIG_SPL_MAX_SIZE < CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR_DATA * 512
+#error "CONFIG_SPL_MAX_SIZE is too small for CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR_DATA"
+#endif
+
+#if MAX_IMAGE_SIZE > CONFIG_SYS_L2_SIZE
+#error "Image is too big"
+#endif
+
+#define DIV_ROUND_UP(a, b) (((a) + (b) - 1) / (b))
+#define ALIGN(x, a) (DIV_ROUND_UP(x, a) * (a))
+
+/* Definitions from C header file asm/immap_85xx.h */
+
+#define CFG_SYS_MPC85xx_L2_OFFSET		0x20000
+
+#define MPC85xx_L2CTL				0x000
+#define MPC85xx_L2CTL_L2E			0x80000000
+#define MPC85xx_L2CTL_L2SRAM_ENTIRE		0x00010000
+
+#define MPC85xx_L2SRBAR0			0x100
+
+#define MPC85xx_L2ERRDIS			0xe44
+#define MPC85xx_L2ERRDIS_MBECC			0x00000008
+#define MPC85xx_L2ERRDIS_SBECC			0x00000004
+
+/* Definitions from C header file fsl_esdhc.h */
+
+#define ESDHCCTL				0x0002e40c
+#define ESDHCCTL_SNOOP				0x00000040
+
+/*
+ * QorIQ pre-PBL eSDHC boot sector:
+ * Instruct BootROM to configure L2 SRAM and eSDHC then load image
+ * from SD card into L2 SRAM and finally jump to image entry point.
+ */
+	.section .bootsect, "a"
+	.globl bootsect
+
+bootsect:
+	.org 0x40 /* BOOT signature */
+	.ascii "BOOT"
+
+	.org 0x48 /* Number of bytes to be copied, must be multiple of block size (512) */
+	.long ALIGN(MAX_IMAGE_SIZE, 512)
+
+	.org 0x50 /* Source address from the beginning of boot sector in byte address format, must be multiple of block size (512) */
+	.long (CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR_START + CONFIG_FSL_PREPBL_ESDHC_BOOT_SECTOR_DATA) * 512
+
+	.org 0x58 /* Target address in the system's local memory address space */
+	.long CONFIG_SYS_MONITOR_BASE
+
+	.org 0x60 /* Execution starting address */
+	.long _start
+
+	.org 0x68 /* Number of configuration data pairs */
+	.long DIV_ROUND_UP(.Lconf_pair_end - .Lconf_pair_start, 8)
+
+	.org 0x80 /* Start of configuration */
+	.Lconf_pair_start:
+
+	.long CONFIG_SYS_CCSRBAR_DEFAULT + CFG_SYS_MPC85xx_L2_OFFSET + MPC85xx_L2SRBAR0 /* Address: L2 memory-mapped SRAM base addr 0 */
+	.long CONFIG_SYS_INIT_L2_ADDR
+
+	.long CONFIG_SYS_CCSRBAR_DEFAULT + CFG_SYS_MPC85xx_L2_OFFSET + MPC85xx_L2ERRDIS /* Address: L2 cache error disable */
+	.long MPC85xx_L2ERRDIS_MBECC | MPC85xx_L2ERRDIS_SBECC
+
+	.long CONFIG_SYS_CCSRBAR_DEFAULT + CFG_SYS_MPC85xx_L2_OFFSET + MPC85xx_L2CTL /* Address: L2 configuration 0 */
+	.long MPC85xx_L2CTL_L2E | MPC85xx_L2CTL_L2SRAM_ENTIRE
+
+	.long CONFIG_SYS_CCSRBAR_DEFAULT + ESDHCCTL /* Address: eSDHC DMA control */
+	.long ESDHCCTL_SNOOP
+
+	.long 0x40000001 /* Command: Delay in 8 CCB clocks */
+	.long 256
+
+	.long 0x80000001 /* End of configuration */
+	.Lconf_pair_end:
+
+	.org 0x1b8 /* Reserved for MBR/DBR */
+	.org 0x200 /* End of boot sector */
+
+#endif
+#endif
 
 /*
  * e500 Startup -- after reset only the last 4KB of the effective
@@ -73,12 +165,12 @@
  */
 
 	.section .bootpg,"ax"
-	.globl _start_e500
+	.globl _start
 
-_start_e500:
+_start:
 /* Enable debug exception */
 	li	r1,MSR_DE
-	mtmsr 	r1
+	mtmsr	r1
 
 	/*
 	 * If we got an ePAPR device tree pointer passed in as r3, we need that
@@ -124,7 +216,7 @@ _start_e500:
 #endif
 
 
-#if defined(CONFIG_SECURE_BOOT) && defined(CONFIG_E500MC) && \
+#if defined(CONFIG_NXP_ESBC) && defined(CONFIG_E500MC) && \
 	!defined(CONFIG_E6500)
 	/* ISBC uses L2 as stack.
 	 * Disable L2 cache here so that u-boot can enable it later
@@ -249,7 +341,7 @@ l2_disabled:
 /* Interrupt vectors do not fit in minimal SPL. */
 #if !defined(MINIMAL_SPL)
 	/* Setup interrupt vectors */
-	lis	r1,CONFIG_SYS_MONITOR_BASE@h
+	lis	r1,CONFIG_VAL(SYS_MONITOR_BASE)@h
 	mtspr	IVPR,r1
 
 	li	r4,CriticalInput@l
@@ -311,7 +403,7 @@ l2_disabled:
 #endif
 	mtspr	HID0,r0
 
-#if !defined(CONFIG_E500MC) && !defined(CONFIG_QEMU_E500)
+#if !defined(CONFIG_E500MC) && !defined(CONFIG_ARCH_QEMU_E500)
 	li	r0,(HID1_ASTME|HID1_ABE)@l	/* Addr streaming & broadcast */
 	mfspr	r3,PVR
 	andi.	r3,r3, 0xff
@@ -344,39 +436,6 @@ l2_disabled:
 	ori	r0,r0,CONFIG_SYS_INIT_DBCR@l
 	mtspr	DBCR0,r0
 #endif
-
-#ifdef CONFIG_MPC8569
-#define CONFIG_SYS_LBC_ADDR (CONFIG_SYS_CCSRBAR_DEFAULT + 0x5000)
-#define CONFIG_SYS_LBCR_ADDR (CONFIG_SYS_LBC_ADDR + 0xd0)
-
-	/* MPC8569 Rev.0 silcon needs to set bit 13 of LBCR to allow elBC to
-	 * use address space which is more than 12bits, and it must be done in
-	 * the 4K boot page. So we set this bit here.
-	 */
-
-	/* create a temp mapping TLB0[0] for LBCR  */
-	create_tlb0_entry 0, \
-		0, BOOKE_PAGESZ_4K, \
-		CONFIG_SYS_LBC_ADDR, MAS2_I|MAS2_G, \
-		CONFIG_SYS_LBC_ADDR, MAS3_SW|MAS3_SR, \
-		0, r6
-
-	/* Set LBCR register */
-	lis     r4,CONFIG_SYS_LBCR_ADDR@h
-	ori     r4,r4,CONFIG_SYS_LBCR_ADDR@l
-
-	lis     r5,CONFIG_SYS_LBC_LBCR@h
-	ori     r5,r5,CONFIG_SYS_LBC_LBCR@l
-	stw     r5,0(r4)
-	isync
-
-	/* invalidate this temp TLB */
-	lis	r4,CONFIG_SYS_LBC_ADDR@h
-	ori	r4,r4,CONFIG_SYS_LBC_ADDR@l
-	tlbivax	0,r4
-	isync
-
-#endif /* CONFIG_MPC8569 */
 
 /*
  * Search for the TLB that covers the code we're executing, and shrink it
@@ -468,7 +527,7 @@ nexti:	mflr	r1		/* R1 = our PC */
 	blt	1b
 
 #if defined(CONFIG_SYS_PPC_E500_DEBUG_TLB) && !defined(MINIMAL_SPL) && \
-	!defined(CONFIG_SECURE_BOOT)
+	!defined(CONFIG_NXP_ESBC)
 /*
  * TLB entry for debuggging in AS1
  * Create temporary TLB entry in AS0 to handle debug exception
@@ -485,7 +544,7 @@ nexti:	mflr	r1		/* R1 = our PC */
  */
 	create_tlb1_entry CONFIG_SYS_PPC_E500_DEBUG_TLB, \
 		0, BOOKE_PAGESZ_4M, \
-		CONFIG_SYS_MONITOR_BASE & 0xffc00000,  MAS2_I|MAS2_G, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xffc00000,  MAS2_I|MAS2_G, \
 		0xffc00000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 
@@ -496,8 +555,8 @@ nexti:	mflr	r1		/* R1 = our PC */
  */
 	create_tlb1_entry CONFIG_SYS_PPC_E500_DEBUG_TLB, \
 		0, BOOKE_PAGESZ_256K, \
-		CONFIG_SYS_MONITOR_BASE & 0xfffc0000, MAS2_I, \
-		CONFIG_SYS_MONITOR_BASE & 0xfffc0000, MAS3_SX|MAS3_SW|MAS3_SR, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfffc0000, MAS2_I, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfffc0000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 #endif
 #endif
@@ -907,7 +966,7 @@ delete_ccsr_l2_tlb:
 	erratum_set_dcsr 0xb0e38 0xe0400000
 	erratum_set_dcsr 0xb0008 0x00900000
 	erratum_set_dcsr 0xb0e40 0xe00a0000
-	erratum_set_ccsr 0x18600 CONFIG_SYS_FSL_CORENET_SNOOPVEC_COREONLY
+	erratum_set_ccsr 0x18600 CFG_SYS_FSL_CORENET_SNOOPVEC_COREONLY
 #ifdef  CONFIG_RAMBOOT_PBL
 	erratum_set_ccsr 0x10f00 0x495e5000
 #else
@@ -1062,39 +1121,45 @@ create_init_ram_area:
 	/* create a temp mapping in AS=1 to the 4M boot window */
 	create_tlb1_entry 15, \
 		1, BOOKE_PAGESZ_4M, \
-		CONFIG_SYS_MONITOR_BASE & 0xffc00000, MAS2_I|MAS2_G, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xffc00000, MAS2_I|MAS2_G, \
 		0xffc00000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 
-#elif !defined(CONFIG_SYS_RAMBOOT) && defined(CONFIG_SECURE_BOOT)
+#elif !defined(CONFIG_SYS_RAMBOOT) && defined(CONFIG_NXP_ESBC)
 	/* create a temp mapping in AS = 1 for Flash mapping
 	 * created by PBL for ISBC code
-	*/
+	 */
 	create_tlb1_entry 15, \
 		1, BOOKE_PAGESZ_1M, \
-		CONFIG_SYS_MONITOR_BASE & 0xfff00000, MAS2_I|MAS2_G, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfff00000, MAS2_I|MAS2_G, \
 		CONFIG_SYS_PBI_FLASH_WINDOW & 0xfff00000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 
-#elif defined(CONFIG_RAMBOOT_PBL) && defined(CONFIG_SECURE_BOOT)
-	/* create a temp mapping in AS = 1 for mapping CONFIG_SYS_MONITOR_BASE
+/*
+ * For Targets without CONFIG_SPL like P3, P5
+ * and for targets with CONFIG_SPL like T1, T2, T4, only for
+ * u-boot-spl i.e. CONFIG_SPL_BUILD
+ */
+#elif defined(CONFIG_RAMBOOT_PBL) && defined(CONFIG_NXP_ESBC) && \
+	(!defined(CONFIG_SPL) || defined(CONFIG_SPL_BUILD))
+	/* create a temp mapping in AS = 1 for mapping CONFIG_VAL(SYS_MONITOR_BASE)
 	 * to L3 Address configured by PBL for ISBC code
-	*/
+	 */
 	create_tlb1_entry 15, \
 		1, BOOKE_PAGESZ_1M, \
-		CONFIG_SYS_MONITOR_BASE & 0xfff00000, MAS2_I|MAS2_G, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfff00000, MAS2_I|MAS2_G, \
 		CONFIG_SYS_INIT_L3_ADDR & 0xfff00000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 
 #else
 	/*
-	 * create a temp mapping in AS=1 to the 1M CONFIG_SYS_MONITOR_BASE space, the main
-	 * image has been relocated to CONFIG_SYS_MONITOR_BASE on the second stage.
+	 * create a temp mapping in AS=1 to the 1M CONFIG_VAL(SYS_MONITOR_BASE) space, the main
+	 * image has been relocated to CONFIG_VAL(SYS_MONITOR_BASE) on the second stage.
 	 */
 	create_tlb1_entry 15, \
 		1, BOOKE_PAGESZ_1M, \
-		CONFIG_SYS_MONITOR_BASE & 0xfff00000, MAS2_I|MAS2_G, \
-		CONFIG_SYS_MONITOR_BASE & 0xfff00000, MAS3_SX|MAS3_SW|MAS3_SR, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfff00000, MAS2_I|MAS2_G, \
+		CONFIG_VAL(SYS_MONITOR_BASE) & 0xfff00000, MAS3_SX|MAS3_SW|MAS3_SR, \
 		0, r6
 #endif
 
@@ -1139,8 +1204,9 @@ switch_as:
 	li	r0,0
 1:
 	dcbz	r0,r3
-#ifdef CONFIG_E6500	/* Lock/unlock L2 cache instead of L1 */
+#ifdef CONFIG_E6500	/* Lock/unlock L2 cache long with L1 */
 	dcbtls	2, r0, r3
+	dcbtls	0, r0, r3
 #else
 	dcbtls	0, r0, r3
 #endif
@@ -1154,36 +1220,26 @@ switch_as:
 #else
 	/* Calculate absolute address in FLASH and jump there		*/
 	/*--------------------------------------------------------------*/
-	lis	r3,CONFIG_SYS_MONITOR_BASE@h
-	ori	r3,r3,CONFIG_SYS_MONITOR_BASE@l
-	addi	r3,r3,_start_cont - _start
+	lis	r3,_start_cont@h
+	ori	r3,r3,_start_cont@l
 	mtlr	r3
 	blr
 #endif
 
 	.text
-	.globl	_start
-_start:
-	.long	0x27051956		/* U-BOOT Magic Number */
-	.globl	version_string
-version_string:
-	.ascii U_BOOT_VERSION_STRING, "\0"
-
-	.align	4
 	.globl	_start_cont
 _start_cont:
 	/* Setup the stack in initial RAM,could be L2-as-SRAM or L1 dcache*/
 	lis	r3,(CONFIG_SYS_INIT_RAM_ADDR)@h
 	ori	r3,r3,((CONFIG_SYS_INIT_SP_OFFSET-16)&~0xf)@l /* Align to 16 */
 
-#ifdef CONFIG_SYS_MALLOC_F_LEN
-
-#if CONFIG_SYS_MALLOC_F_LEN + GENERATED_GBL_DATA_SIZE > CONFIG_SYS_INIT_RAM_SIZE
-#error "CONFIG_SYS_MALLOC_F_LEN too large to fit into initial RAM."
+#if CONFIG_VAL(SYS_MALLOC_F_LEN)
+#if CONFIG_VAL(SYS_MALLOC_F_LEN) + GENERATED_GBL_DATA_SIZE > CONFIG_SYS_INIT_RAM_SIZE
+#error "SYS_MALLOC_F_LEN too large to fit into initial RAM."
 #endif
 
 	/* Leave 16+ byte for back chain termination and NULL return address */
-	subi	r3,r3,((CONFIG_SYS_MALLOC_F_LEN+16+15)&~0xf)
+	subi	r3,r3,((CONFIG_VAL(SYS_MALLOC_F_LEN)+16+15)&~0xf)
 #endif
 
 	/* End of RAM */
@@ -1192,14 +1248,14 @@ _start_cont:
 
 	li	r0,0
 
-1: 	subi 	r4,r4,4
-	stw 	r0,0(r4)
-	cmplw 	r4,r3
+1:	subi	r4,r4,4
+	stw	r0,0(r4)
+	cmplw	r4,r3
 	bne	1b
 
-#ifdef CONFIG_SYS_MALLOC_F_LEN
-	lis	r4,(CONFIG_SYS_INIT_RAM_ADDR)@h
-	ori	r4,r4,(CONFIG_SYS_GBL_DATA_OFFSET)@l
+#if CONFIG_VAL(SYS_MALLOC_F_LEN)
+	lis	r4,SYS_INIT_SP_ADDR@h
+	ori	r4,r4,SYS_INIT_SP_ADDR@l
 
 	addi	r3,r3,16	/* Pre-relocation malloc area */
 	stw	r3,GD_MALLOC_BASE(r4)
@@ -1211,6 +1267,9 @@ _start_cont:
 	mr	r1,r3		/* Transfer to SP(r1) */
 
 	GET_GOT
+	/* Needed for -msingle-pic-base */
+	bl	_GLOBAL_OFFSET_TABLE_@local-4
+	mflr	r30
 
 	/* Pass our potential ePAPR device tree pointer to cpu_init_early_f */
 	mr	r3, r24
@@ -1367,8 +1426,8 @@ icache_enable:
 	mtlr	r8
 	isync
 	mfspr	r4,L1CSR1
-	ori	r4,r4,0x0001
-	oris	r4,r4,0x0001
+	ori	r4,r4,(L1CSR1_CPE | L1CSR1_ICE)@l
+	oris	r4,r4,(L1CSR1_CPE | L1CSR1_ICE)@h
 	mtspr	L1CSR1,r4
 	isync
 	blr
@@ -1396,8 +1455,8 @@ dcache_enable:
 	mtlr	r8
 	isync
 	mfspr	r0,L1CSR0
-	ori	r0,r0,0x0001
-	oris	r0,r0,0x0001
+	ori	r0,r0,(L1CSR0_CPE |  L1CSR0_DCE)@l
+	oris	r0,r0,(L1CSR0_CPE |  L1CSR0_DCE)@h
 	msync
 	isync
 	mtspr	L1CSR0,r0
@@ -1418,16 +1477,6 @@ dcache_disable:
 dcache_status:
 	mfspr	r3,L1CSR0
 	andi.	r3,r3,L1CSR0_DCE
-	blr
-
-	.globl get_pvr
-get_pvr:
-	mfspr	r3,PVR
-	blr
-
-	.globl get_svr
-get_svr:
-	mfspr	r3,SVR
 	blr
 
 /*------------------------------------------------------------------------------- */
@@ -1551,7 +1600,7 @@ write_tlb:
 	blr
 
 /*
- * void relocate_code (addr_sp, gd, addr_moni)
+ * void relocate_code(addr_sp, gd, addr_moni)
  *
  * This "function" does not return, instead it continues in RAM
  * after relocating the monitor code.
@@ -1570,8 +1619,8 @@ relocate_code:
 	GET_GOT
 #ifndef CONFIG_SPL_SKIP_RELOCATE
 	mr	r3,r5				/* Destination Address	*/
-	lis	r4,CONFIG_SYS_MONITOR_BASE@h		/* Source      Address	*/
-	ori	r4,r4,CONFIG_SYS_MONITOR_BASE@l
+	lis	r4,CONFIG_VAL(SYS_MONITOR_BASE)@h		/* Source      Address	*/
+	ori	r4,r4,CONFIG_VAL(SYS_MONITOR_BASE)@l
 	lwz	r5,GOT(__init_end)
 	sub	r5,r5,r4
 	li	r6,CONFIG_SYS_CACHELINE_SIZE		/* Cache Line Size	*/
@@ -1579,7 +1628,7 @@ relocate_code:
 	/*
 	 * Fix GOT pointer:
 	 *
-	 * New GOT-PTR = (old GOT-PTR - CONFIG_SYS_MONITOR_BASE) + Destination Address
+	 * New GOT-PTR = (old GOT-PTR - CONFIG_VAL(SYS_MONITOR_BASE)) + Destination Address
 	 *
 	 * Offset:
 	 */
@@ -1644,7 +1693,7 @@ relocate_code:
  * initialization, now running from RAM.
  */
 
-	addi	r0,r10,in_ram - _start
+	addi	r0,r10,in_ram - CONFIG_VAL(SYS_MONITOR_BASE)
 
 	/*
 	 * As IVPR is going to point RAM address,
@@ -1784,8 +1833,9 @@ unlock_ram_in_cache:
 	slwi	r4,r4,(10 - 1 - L1_CACHE_SHIFT)
 	mtctr	r4
 1:	dcbi	r0,r3
-#ifdef CONFIG_E6500	/* lock/unlock L2 cache instead of L1 */
+#ifdef CONFIG_E6500	/* lock/unlock L2 cache long with L1 */
 	dcblc	2, r0, r3
+	dcblc	0, r0, r3
 #else
 	dcblc	r0,r3
 #endif

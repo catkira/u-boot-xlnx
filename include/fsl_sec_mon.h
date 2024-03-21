@@ -1,8 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Common internal memory map for some Freescale SoCs
  *
  * Copyright 2015 Freescale Semiconductor, Inc.
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __FSL_SEC_MON_H
@@ -23,8 +23,6 @@
 #define sec_mon_in16(a)       in_be16(a)
 #define sec_mon_clrbits32     clrbits_be32
 #define sec_mon_setbits32     setbits_be32
-#else
-#error Neither CONFIG_SYS_FSL_SEC_MON_LE nor CONFIG_SYS_FSL_SEC_MON_BE defined
 #endif
 
 struct ccsr_sec_mon_regs {
@@ -34,13 +32,16 @@ struct ccsr_sec_mon_regs {
 	u32 hp_stat;	/* 0x08 SEC_MON_HP Status Register */
 };
 
-#define HPCOMR_SW_SV 0x100		/* Security Violation bit */
-#define HPCOMR_SW_FSV 0x200		/* Fatal Security Violation bit */
-#define HPCOMR_SSM_ST 0x1		/* SSM_ST field in SEC_MON command */
+#define HPCOMR_SW_SV		0x100	/* Security Violation bit */
+#define HPCOMR_SW_FSV		0x200	/* Fatal Security Violation bit */
+#define HPCOMR_SSM_ST		0x1	/* SSM_ST field in SEC_MON command */
+#define HPCOMR_SSM_ST_DIS	0x2	/* Disable Secure to Trusted State */
+#define HPCOMR_SSM_SFNS_DIS	0x4	/* Disable Soft Fail to Non-Secure */
 #define HPSR_SSM_ST_CHECK	0x900	/* SEC_MON is in check state */
 #define HPSR_SSM_ST_NON_SECURE	0xb00	/* SEC_MON is in non secure state */
 #define HPSR_SSM_ST_TRUST	0xd00	/* SEC_MON is in trusted state */
 #define HPSR_SSM_ST_SOFT_FAIL	0x300	/* SEC_MON is in soft fail state */
+#define HPSR_SSM_ST_SECURE	0xf00	/* SEC_MON is in secure state */
 #define HPSR_SSM_ST_MASK	0xf00	/* Mask for SSM_ST field */
 
 /*
@@ -53,6 +54,7 @@ enum {
 	SEC_MON_SW_SV,
 };
 
-int change_sec_mon_state(uint32_t initial_state, uint32_t final_state);
+/* Transition SEC_MON state */
+int set_sec_mon_state(u32 state);
 
 #endif /* __FSL_SEC_MON_H */

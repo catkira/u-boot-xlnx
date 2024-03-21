@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
 #include <fdtdec.h>
+#include <log.h>
 #include <pch.h>
 #include <pci.h>
 #include <asm/cpu.h>
+#include <asm/global_data.h>
 #include <asm/gpio.h>
 #include <asm/io.h>
 #include <asm/pci.h>
@@ -104,7 +105,7 @@ static int ich6_pinctrl_cfg_pin(s32 gpiobase, s32 iobase, int pin_node)
 
 	/* if iobase is present, let's configure the pad */
 	if (iobase != -1) {
-		int iobase_addr;
+		ulong iobase_addr;
 
 		/*
 		 * The offset for the same pin for the IOBASE and GPIOBASE are
@@ -159,11 +160,9 @@ static int ich6_pinctrl_probe(struct udevice *dev)
 	u32 iobase = -1;
 
 	debug("%s: start\n", __func__);
-	ret = uclass_first_device(UCLASS_PCH, &pch);
+	ret = uclass_first_device_err(UCLASS_PCH, &pch);
 	if (ret)
 		return ret;
-	if (!pch)
-		return -ENODEV;
 
 	/*
 	 * Get the memory/io base address to configure every pins.
@@ -187,7 +186,7 @@ static int ich6_pinctrl_probe(struct udevice *dev)
 		return -EINVAL;
 	}
 
-	for (pin_node = fdt_first_subnode(gd->fdt_blob, dev->of_offset);
+	for (pin_node = fdt_first_subnode(gd->fdt_blob, dev_of_offset(dev));
 	     pin_node > 0;
 	     pin_node = fdt_next_subnode(gd->fdt_blob, pin_node)) {
 		/* Configure the pin */

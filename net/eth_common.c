@@ -1,69 +1,45 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2001-2015
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
  * Joe Hershberger, National Instruments
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <bootstage.h>
 #include <dm.h>
+#include <env.h>
 #include <miiphy.h>
 #include <net.h>
 #include "eth_internal.h"
 
-void eth_parse_enetaddr(const char *addr, uchar *enetaddr)
-{
-	char *end;
-	int i;
-
-	for (i = 0; i < 6; ++i) {
-		enetaddr[i] = addr ? simple_strtoul(addr, &end, 16) : 0;
-		if (addr)
-			addr = (*end) ? end + 1 : end;
-	}
-}
-
-int eth_getenv_enetaddr(const char *name, uchar *enetaddr)
-{
-	eth_parse_enetaddr(getenv(name), enetaddr);
-	return is_valid_ethaddr(enetaddr);
-}
-
-int eth_setenv_enetaddr(const char *name, const uchar *enetaddr)
-{
-	char buf[20];
-
-	sprintf(buf, "%pM", enetaddr);
-
-	return setenv(name, buf);
-}
-
-int eth_getenv_enetaddr_by_index(const char *base_name, int index,
+int eth_env_get_enetaddr_by_index(const char *base_name, int index,
 				 uchar *enetaddr)
 {
 	char enetvar[32];
 	sprintf(enetvar, index ? "%s%daddr" : "%saddr", base_name, index);
-	return eth_getenv_enetaddr(enetvar, enetaddr);
+	return eth_env_get_enetaddr(enetvar, enetaddr);
 }
 
-int eth_setenv_enetaddr_by_index(const char *base_name, int index,
+int eth_env_set_enetaddr_by_index(const char *base_name, int index,
 				 uchar *enetaddr)
 {
 	char enetvar[32];
 	sprintf(enetvar, index ? "%s%daddr" : "%saddr", base_name, index);
-	return eth_setenv_enetaddr(enetvar, enetaddr);
+	return eth_env_set_enetaddr(enetvar, enetaddr);
 }
 
 void eth_common_init(void)
 {
 	bootstage_mark(BOOTSTAGE_ID_NET_ETH_START);
+#if CONFIG_IS_ENABLED(ETH)
 #if defined(CONFIG_MII) || defined(CONFIG_CMD_MII) || defined(CONFIG_PHYLIB)
 	miiphy_init();
 #endif
 
 #ifdef CONFIG_PHYLIB
 	phy_init();
+#endif
 #endif
 }
 
@@ -73,13 +49,13 @@ int eth_mac_skip(int index)
 	char *skip_state;
 
 	sprintf(enetvar, index ? "eth%dmacskip" : "ethmacskip", index);
-	skip_state = getenv(enetvar);
+	skip_state = env_get(enetvar);
 	return skip_state != NULL;
 }
 
 void eth_current_changed(void)
 {
-	char *act = getenv("ethact");
+	char *act = env_get("ethact");
 	char *ethrotate;
 
 	/*
@@ -87,21 +63,21 @@ void eth_current_changed(void)
 	 * ethernet device if uc_priv->current == NULL. This is not what
 	 * we want when 'ethrotate' variable is 'no'.
 	 */
-	ethrotate = getenv("ethrotate");
+	ethrotate = env_get("ethrotate");
 	if ((ethrotate != NULL) && (strcmp(ethrotate, "no") == 0))
 		return;
 
 	/* update current ethernet name */
 	if (eth_get_dev()) {
 		if (act == NULL || strcmp(act, eth_get_name()) != 0)
-			setenv("ethact", eth_get_name());
+			env_set("ethact", eth_get_name());
 	}
 	/*
 	 * remove the variable completely if there is no active
 	 * interface
 	 */
 	else if (act != NULL)
-		setenv("ethact", NULL);
+		env_set("ethact", NULL);
 }
 
 void eth_try_another(int first_restart)
@@ -113,7 +89,7 @@ void eth_try_another(int first_restart)
 	 * Do not rotate between network interfaces when
 	 * 'ethrotate' variable is set to 'no'.
 	 */
-	ethrotate = getenv("ethrotate");
+	ethrotate = env_get("ethrotate");
 	if ((ethrotate != NULL) && (strcmp(ethrotate, "no") == 0))
 		return;
 
@@ -137,14 +113,14 @@ void eth_set_current(void)
 	static int  env_changed_id;
 	int	env_id;
 
-	env_id = get_env_id();
+	env_id = env_get_id();
 	if ((act == NULL) || (env_changed_id != env_id)) {
-		act = getenv("ethact");
+		act = env_get("ethact");
 		env_changed_id = env_id;
 	}
 
 	if (act == NULL) {
-		char *ethprime = getenv("ethprime");
+		char *ethprime = env_get("ethprime");
 		void *dev = NULL;
 
 		if (ethprime)

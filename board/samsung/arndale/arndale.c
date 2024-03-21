@@ -1,11 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2013 Samsung Electronics
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <cpu_func.h>
+#include <init.h>
+#include <log.h>
 #include <usb.h>
+#include <asm/global_data.h>
 #include <asm/gpio.h>
 #include <asm/arch/pinmux.h>
 #include <asm/arch/dwmmc.h>
@@ -55,7 +58,7 @@ int power_init_board(void)
 	return 0;
 }
 
-void dram_init_banksize(void)
+int dram_init_banksize(void)
 {
 	int i;
 	u32 addr, size;
@@ -67,20 +70,9 @@ void dram_init_banksize(void)
 		gd->bd->bi_dram[i].start = addr;
 		gd->bd->bi_dram[i].size = size;
 	}
-}
 
-#ifdef CONFIG_GENERIC_MMC
-int board_mmc_init(bd_t *bis)
-{
-	int ret;
-	/* dwmmc initializattion for available channels */
-	ret = exynos_dwmmc_init(gd->fdt_blob);
-	if (ret)
-		debug("dwmmc init failed\n");
-
-	return ret;
+	return 0;
 }
-#endif
 
 static int board_uart_init(void)
 {
@@ -120,10 +112,10 @@ int checkboard(void)
 }
 #endif
 
-#ifdef CONFIG_S5P_PA_SYSRAM
+#ifdef CONFIG_SMP_PEN_ADDR
 void smp_set_core_boot_addr(unsigned long addr, int corenr)
 {
-	writel(addr, CONFIG_S5P_PA_SYSRAM);
+	writel(addr, CONFIG_SMP_PEN_ADDR);
 
 	/* make sure this write is really executed */
 	__asm__ volatile ("dsb\n");

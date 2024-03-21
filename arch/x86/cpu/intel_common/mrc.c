@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
 #include <dm.h>
+#include <init.h>
+#include <log.h>
 #include <syscon.h>
 #include <asm/cpu.h>
+#include <asm/global_data.h>
 #include <asm/gpio.h>
 #include <asm/intel_regs.h>
 #include <asm/mrc_common.h>
@@ -23,7 +25,7 @@ static const char *const ecc_decoder[] = {
 	"active"
 };
 
-ulong mrc_common_board_get_usable_ram_top(ulong total_size)
+phys_size_t mrc_common_board_get_usable_ram_top(phys_size_t total_size)
 {
 	struct memory_info *info = &gd->arch.meminfo;
 	uintptr_t dest_addr = 0;
@@ -48,7 +50,7 @@ ulong mrc_common_board_get_usable_ram_top(ulong total_size)
 
 	dest_addr = largest->start + largest->size;
 
-	return (ulong)dest_addr;
+	return (phys_size_t)dest_addr;
 }
 
 void mrc_common_dram_init_banksize(void)
@@ -149,7 +151,7 @@ int mrc_locate_spd(struct udevice *dev, int size, const void **spd_datap)
 	spd_index = dm_gpio_get_values_as_int(desc, ret);
 	debug("spd index %d\n", spd_index);
 
-	node = fdt_first_subnode(blob, dev->of_offset);
+	node = fdt_first_subnode(blob, dev_of_offset(dev));
 	if (node < 0)
 		return -EINVAL;
 	for (spd_node = fdt_first_subnode(blob, node);
@@ -242,11 +244,6 @@ static int sdram_initialise(struct udevice *dev, struct udevice *me_dev,
 	debug("System Agent Version %d.%d.%d Build %d\n",
 	      version >> 24 , (version >> 16) & 0xff,
 	      (version >> 8) & 0xff, version & 0xff);
-
-#if CONFIG_USBDEBUG
-	/* mrc.bin reconfigures USB, so reinit it to have debug */
-	early_usbdebug_init();
-#endif
 
 	return 0;
 }

@@ -1,12 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  *  (C) Copyright 2010,2011
  *  NVIDIA Corporation <www.nvidia.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
-#include <lcd.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/funcmux.h>
@@ -14,7 +12,7 @@
 #include <asm/arch/tegra.h>
 #include <asm/gpio.h>
 
-#ifdef CONFIG_TEGRA_MMC
+#ifdef CONFIG_MMC_SDHCI_TEGRA
 /*
  * Routine: pin_mux_mmc
  * Description: setup the pin muxes/tristate values for the SDMMC(s)

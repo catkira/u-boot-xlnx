@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <common.h>
 #include <phy.h>
@@ -38,7 +37,7 @@ u32 dpmac_to_devdisr[] = {
 
 static int is_device_disabled(int dpmac_id)
 {
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 	u32 devdisr2 = in_le32(&gur->devdisr2);
 
 	return dpmac_to_devdisr[dpmac_id] & devdisr2;
@@ -46,14 +45,14 @@ static int is_device_disabled(int dpmac_id)
 
 void wriop_dpmac_disable(int dpmac_id)
 {
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 
 	setbits_le32(&gur->devdisr2, dpmac_to_devdisr[dpmac_id]);
 }
 
 void wriop_dpmac_enable(int dpmac_id)
 {
-	struct ccsr_gur __iomem *gur = (void *)CONFIG_SYS_FSL_GUTS_ADDR;
+	struct ccsr_gur __iomem *gur = (void *)CFG_SYS_FSL_GUTS_ADDR;
 
 	clrbits_le32(&gur->devdisr2, dpmac_to_devdisr[dpmac_id]);
 }
@@ -63,7 +62,7 @@ phy_interface_t wriop_dpmac_enet_if(int dpmac_id, int lane_prtcl)
 	enum srds_prtcl;
 
 	if (is_device_disabled(dpmac_id + 1))
-		return PHY_INTERFACE_MODE_NONE;
+		return PHY_INTERFACE_MODE_NA;
 
 	if (lane_prtcl >= SGMII1 && lane_prtcl <= SGMII16)
 		return PHY_INTERFACE_MODE_SGMII;
@@ -77,5 +76,35 @@ phy_interface_t wriop_dpmac_enet_if(int dpmac_id, int lane_prtcl)
 	if (lane_prtcl >= QSGMII_A && lane_prtcl <= QSGMII_D)
 		return PHY_INTERFACE_MODE_QSGMII;
 
-	return PHY_INTERFACE_MODE_NONE;
+	return PHY_INTERFACE_MODE_NA;
+}
+
+void wriop_init_dpmac_qsgmii(int sd, int lane_prtcl)
+{
+	switch (lane_prtcl) {
+	case QSGMII_A:
+		wriop_init_dpmac(sd, 5, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 6, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 7, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 8, (int)lane_prtcl);
+		break;
+	case QSGMII_B:
+		wriop_init_dpmac(sd, 1, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 2, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 3, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 4, (int)lane_prtcl);
+		break;
+	case QSGMII_C:
+		wriop_init_dpmac(sd, 13, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 14, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 15, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 16, (int)lane_prtcl);
+		break;
+	case QSGMII_D:
+		wriop_init_dpmac(sd, 9, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 10, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 11, (int)lane_prtcl);
+		wriop_init_dpmac(sd, 12, (int)lane_prtcl);
+		break;
+	}
 }

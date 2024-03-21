@@ -1,21 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Marek Vasut <marex@denx.de>
- *
- * SPDX-License-Identifier: GPL-2.0+
  */
 
 #include <common.h>
+#include <init.h>
 #include <asm/io.h>
 #include <asm/addrspace.h>
 #include <asm/types.h>
+#include <linux/bitops.h>
+#include <linux/delay.h>
 #include <mach/ath79.h>
 #include <mach/ar71xx_regs.h>
 #include <mach/ddr.h>
 #include <debug_uart.h>
 
-DECLARE_GLOBAL_DATA_PTR;
-
-#ifdef CONFIG_USB
+#ifdef CONFIG_USB_HOST
 static void wdr4300_usb_start(void)
 {
 	void __iomem *gpio_regs = map_physmem(AR71XX_GPIO_BASE,
@@ -34,8 +34,7 @@ static void wdr4300_usb_start(void)
 static inline void wdr4300_usb_start(void) {}
 #endif
 
-#ifdef CONFIG_BOARD_EARLY_INIT_F
-int board_early_init_f(void)
+void wdr4300_pinmux_config(void)
 {
 	void __iomem *regs;
 
@@ -56,12 +55,23 @@ int board_early_init_f(void)
 	writel(0x00000000, regs + AR934X_GPIO_REG_OUT_FUNC3);
 	writel(0x0000004d, regs + AR934X_GPIO_REG_OUT_FUNC4);
 	writel(0x00000000, regs + AR934X_GPIO_REG_OUT_FUNC5);
+}
 
-#ifdef CONFIG_DEBUG_UART
-	debug_uart_init();
+#ifdef CONFIG_DEBUG_UART_BOARD_INIT
+void board_debug_uart_init(void)
+{
+	wdr4300_pinmux_config();
+}
 #endif
 
-#ifndef CONFIG_SKIP_LOWLEVEL_INIT
+#ifdef CONFIG_BOARD_EARLY_INIT_F
+int board_early_init_f(void)
+{
+#ifndef CONFIG_DEBUG_UART_BOARD_INIT
+	wdr4300_pinmux_config();
+#endif
+
+#if !CONFIG_IS_ENABLED(SKIP_LOWLEVEL_INIT)
 	ar934x_pll_init(560, 480, 240);
 	ar934x_ddr_init(560, 480, 240);
 #endif

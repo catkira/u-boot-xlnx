@@ -1,20 +1,17 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * This file implements recording of each stage of the boot process. It is
  * intended to implement timing of each stage, reporting this information
  * to the user and passing it to the OS for logging / further analysis.
+ * Note that it requires timer_get_boot_us() to be defined by the board
  *
  * Copyright (c) 2011 The Chromium OS Authors.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _BOOTSTAGE_H
 #define _BOOTSTAGE_H
 
-/* Define this for host tools */
-#ifndef CONFIG_BOOTSTAGE_USER_COUNT
-#define CONFIG_BOOTSTAGE_USER_COUNT	20
-#endif
+#include <linux/kconfig.h>
 
 /* Flags for each bootstage record */
 enum bootstage_flags {
@@ -169,13 +166,20 @@ enum bootstage_id {
 	BOOTSTAGE_ID_NAND_FIT_READ_OK,
 
 	BOOTSTAGE_ID_FIT_LOADABLE_START = 160,	/* for Loadable Images */
+
+	BOOTSTAGE_ID_FIT_SPL_START = 170,	/* for SPL Images */
 	/*
 	 * These boot stages are new, higher level, and not directly related
 	 * to the old boot progress numbers. They are useful for recording
 	 * rough boot timing information.
 	 */
 	BOOTSTAGE_ID_AWAKE,
+	BOOTSTAGE_ID_START_TPL,
+	BOOTSTAGE_ID_END_TPL,
 	BOOTSTAGE_ID_START_SPL,
+	BOOTSTAGE_ID_END_SPL,
+	BOOTSTAGE_ID_START_VPL,
+	BOOTSTAGE_ID_END_VPL,
 	BOOTSTAGE_ID_START_UBOOT_F,
 	BOOTSTAGE_ID_START_UBOOT_R,
 	BOOTSTAGE_ID_USB_START,
@@ -185,6 +189,7 @@ enum bootstage_id {
 	BOOTSTAGE_ID_BOOTM_START,
 	BOOTSTAGE_ID_BOOTM_HANDOFF,
 	BOOTSTAGE_ID_MAIN_LOOP,
+	BOOTSTAGE_ID_ENTER_CLI_LOOP,
 	BOOTSTAGE_KERNELREAD_START,
 	BOOTSTAGE_KERNELREAD_STOP,
 	BOOTSTAGE_ID_BOARD_INIT,
@@ -198,25 +203,31 @@ enum bootstage_id {
 	BOOTSTAGE_ID_ACCUM_SCSI,
 	BOOTSTAGE_ID_ACCUM_SPI,
 	BOOTSTAGE_ID_ACCUM_DECOMP,
+	BOOTSTAGE_ID_ACCUM_OF_LIVE,
 	BOOTSTAGE_ID_FPGA_INIT,
+	BOOTSTAGE_ID_ACCUM_DM_SPL,
+	BOOTSTAGE_ID_ACCUM_DM_F,
+	BOOTSTAGE_ID_ACCUM_DM_R,
+	BOOTSTAGE_ID_ACCUM_FSP_M,
+	BOOTSTAGE_ID_ACCUM_FSP_S,
+	BOOTSTAGE_ID_ACCUM_MMAP_SPI,
 
 	/* a few spare for the user, from here */
 	BOOTSTAGE_ID_USER,
-	BOOTSTAGE_ID_COUNT = BOOTSTAGE_ID_USER + CONFIG_BOOTSTAGE_USER_COUNT,
 	BOOTSTAGE_ID_ALLOC,
 };
 
 /*
  * Return the time since boot in microseconds, This is needed for bootstage
  * and should be defined in CPU- or board-specific code. If undefined then
- * millisecond resolution will be used (the standard get_timer()).
+ * you will get a link error.
  */
 ulong timer_get_boot_us(void);
 
-#if defined(USE_HOSTCC)
+#if defined(USE_HOSTCC) || !CONFIG_IS_ENABLED(SHOW_BOOT_PROGRESS)
 #define show_boot_progress(val) do {} while (0)
 #else
-/*
+/**
  * Board code can implement show_boot_progress() if needed.
  *
  * @param val	Progress state (enum bootstage_id), or -id if an error
@@ -225,8 +236,14 @@ ulong timer_get_boot_us(void);
 void show_boot_progress(int val);
 #endif
 
-#if defined(CONFIG_BOOTSTAGE) && !defined(CONFIG_SPL_BUILD) && \
-	!defined(USE_HOSTCC)
+#if !defined(USE_HOSTCC)
+#if CONFIG_IS_ENABLED(BOOTSTAGE)
+#define ENABLE_BOOTSTAGE
+#endif
+#endif
+
+#ifdef ENABLE_BOOTSTAGE
+
 /* This is the full bootstage implementation */
 
 /**
@@ -234,8 +251,8 @@ void show_boot_progress(int val);
  *
  * Call this after relocation has happened and after malloc has been initted.
  * We need to copy any pointers in bootstage records that were added pre-
- * relocation, since memory can be overritten later.
- * @return Always returns 0, to indicate success
+ * relocation, since memory can be overwritten later.
+ * Return: Always returns 0, to indicate success
  */
 int bootstage_relocate(void);
 
@@ -250,14 +267,29 @@ int bootstage_relocate(void);
 ulong bootstage_add_record(enum bootstage_id id, const char *name,
 			   int flags, ulong mark);
 
-/*
+/**
  * Mark a time stamp for the current boot stage.
  */
-ulong bootstage_mark(enum bootstage_id id);
+#define bootstage_mark(id)	bootstage_mark_name(id, __func__)
+#define bootstage_error(id)	bootstage_error_name(id, __func__)
 
-ulong bootstage_error(enum bootstage_id id);
-
+/**
+ * bootstage_mark_name - record bootstage with passing id and name
+ * @id: Bootstage id to record this timestamp against
+ * @name: Textual name to display for this id in the report
+ *
+ * Return: recorded time stamp
+ */
 ulong bootstage_mark_name(enum bootstage_id id, const char *name);
+
+/**
+ * bootstage_error_name - record bootstage error with passing id and name
+ * @id: Bootstage id to record this timestamp against
+ * @name: Textual name to display for this id in the report
+ *
+ * Return: recorded time stamp
+ */
+ulong bootstage_error_name(enum bootstage_id id, const char *name);
 
 /**
  * Mark a time stamp in the given function and line number
@@ -267,7 +299,7 @@ ulong bootstage_mark_name(enum bootstage_id id, const char *name);
  * @param file		Filename to record (NULL if none)
  * @param func		Function name to record
  * @param linenum	Line number to record
- * @return recorded time stamp
+ * Return: recorded time stamp
  */
 ulong bootstage_mark_code(const char *file, const char *func,
 			  int linenum);
@@ -281,7 +313,7 @@ ulong bootstage_mark_code(const char *file, const char *func,
  *
  * @param id	Bootstage id to record this timestamp against
  * @param name	Textual name to display for this id in the report (maybe NULL)
- * @return start timestamp in microseconds
+ * Return: start timestamp in microseconds
  */
 uint32_t bootstage_start(enum bootstage_id id, const char *name);
 
@@ -293,7 +325,7 @@ uint32_t bootstage_start(enum bootstage_id id, const char *name);
  * as many times as you like.
  *
  * @param id	Bootstage id to record this timestamp against
- * @return time spent in this iteration of the activity (i.e. the time now
+ * Return: time spent in this iteration of the activity (i.e. the time now
  *		less the start time recorded in the last bootstage_start() call
  *		with this id.
  */
@@ -305,16 +337,16 @@ void bootstage_report(void);
 /**
  * Add bootstage information to the device tree
  *
- * @return 0 if ok, -ve on error
+ * Return: 0 if ok, -ve on error
  */
 int bootstage_fdt_add_report(void);
 
-/*
+/**
  * Stash bootstage data into memory
  *
  * @param base	Base address of memory buffer
  * @param size	Size of memory buffer
- * @return 0 if stashed ok, -1 if out of space
+ * Return: 0 if stashed ok, -1 if out of space
  */
 int bootstage_stash(void *base, int size);
 
@@ -326,9 +358,26 @@ int bootstage_stash(void *base, int size);
  *
  * @param base	Base address of memory buffer
  * @param size	Size of memory buffer (-1 if unknown)
- * @return 0 if unstashed ok, -1 if bootstage info not found, or out of space
+ * Return: 0 if unstashed ok, -ENOENT if bootstage info not found, -ENOSPC if
+ *	there is not space for read the stashed data, or other error if
+ *	something else went wrong
  */
-int bootstage_unstash(void *base, int size);
+int bootstage_unstash(const void *base, int size);
+
+/**
+ * bootstage_get_size() - Get the size of the bootstage data
+ *
+ * Return: size of boostage data in bytes
+ */
+int bootstage_get_size(void);
+
+/**
+ * bootstage_init() - Prepare bootstage for use
+ *
+ * @first: true if this is the first time bootstage is set up. This causes it
+ *	to add a 'reset' record with a time of 0.
+ */
+int bootstage_init(bool first);
 
 #else
 static inline ulong bootstage_add_record(enum bootstage_id id,
@@ -386,11 +435,22 @@ static inline int bootstage_stash(void *base, int size)
 	return 0;	/* Pretend to succeed */
 }
 
-static inline int bootstage_unstash(void *base, int size)
+static inline int bootstage_unstash(const void *base, int size)
 {
 	return 0;	/* Pretend to succeed */
 }
-#endif /* CONFIG_BOOTSTAGE */
+
+static inline int bootstage_get_size(void)
+{
+	return 0;
+}
+
+static inline int bootstage_init(bool first)
+{
+	return 0;
+}
+
+#endif /* ENABLE_BOOTSTAGE */
 
 /* Helper macro for adding a bootstage to a line of code */
 #define BOOTSTAGE_MARKER()	\

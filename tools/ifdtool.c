@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * ifdtool - Manage Intel Firmware Descriptor information
  *
  * Copyright 2014 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  *
  * From Coreboot project, but it got a serious code clean-up
  * and a few new features
@@ -12,13 +11,14 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include "ifdtool.h"
 
 #undef DEBUG
@@ -33,16 +33,9 @@
 #define FLREG_BASE(reg)		((reg & 0x00000fff) << 12);
 #define FLREG_LIMIT(reg)	(((reg & 0x0fff0000) >> 4) | 0xfff);
 
-enum input_file_type_t {
-	IF_normal,
-	IF_fdt,
-	IF_uboot,
-};
-
 struct input_file {
 	char *fname;
 	unsigned int addr;
-	enum input_file_type_t type;
 };
 
 /**
@@ -50,7 +43,7 @@ struct input_file {
  *
  * @image:	Pointer to image
  * @size:	Size of image in bytes
- * @return pointer to structure, or NULL if not found
+ * Return: pointer to structure, or NULL if not found
  */
 static struct fdbar_t *find_fd(char *image, int size)
 {
@@ -79,7 +72,7 @@ static struct fdbar_t *find_fd(char *image, int size)
  * @frba:		Flash region list
  * @region_type:	Type of region (0..MAX_REGIONS-1)
  * @region:		Region information is written here
- * @return 0 if OK, else -ve
+ * Return: 0 if OK, else -ve
  */
 static int get_region(struct frba_t *frba, int region_type,
 		      struct region_t *region)
@@ -387,7 +380,7 @@ static void dump_oem(uint8_t *oem)
  *
  * @image:	Pointer to image
  * @size:	Size of image in bytes
- * @return 0 if OK, -1 on error
+ * Return: 0 if OK, -1 on error
  */
 static int dump_fd(char *image, int size)
 {
@@ -439,7 +432,7 @@ static int dump_fd(char *image, int size)
  *
  * @image:	Pointer to image
  * @size:	Size of image in bytes
- * @return 0 if OK, -ve on error
+ * Return: 0 if OK, -ve on error
  */
 static int write_regions(char *image, int size)
 {
@@ -494,7 +487,7 @@ static int perror_fname(const char *fmt, const char *fname)
  * @filename:	Filename to use for the image
  * @image:	Pointer to image
  * @size:	Size of image in bytes
- * @return 0 if OK, -ve on error
+ * Return: 0 if OK, -ve on error
  */
 static int write_image(char *filename, char *image, int size)
 {
@@ -602,7 +595,7 @@ static void unlock_descriptor(char *image, int size)
  *
  * @fname:	Filename to open
  * @sizep:	Returns file size in bytes
- * @return 0 if OK, -1 on error
+ * Return: 0 if OK, -1 on error
  */
 int open_for_read(const char *fname, int *sizep)
 {
@@ -629,7 +622,7 @@ int open_for_read(const char *fname, int *sizep)
  * @size:		Size of image in bytes
  * @region_type:	Region where the file should be added
  * @region_fname:	Filename to add to the image
- * @return 0 if OK, -ve on error
+ * Return: 0 if OK, -ve on error
  */
 int inject_region(char *image, int size, int region_type, char *region_fname)
 {
@@ -708,7 +701,7 @@ int inject_region(char *image, int size, int region_type, char *region_fname)
  * @write_fname:	Filename to add to the image
  * @offset_uboot_top:	Offset of the top of U-Boot
  * @offset_uboot_start:	Offset of the start of U-Boot
- * @return number of bytes written if OK, -ve on error
+ * Return: number of bytes written if OK, -ve on error
  */
 static int write_data(char *image, int size, unsigned int addr,
 		      const char *write_fname, int offset_uboot_top,
@@ -760,224 +753,11 @@ static int write_data(char *image, int size, unsigned int addr,
 	return write_size;
 }
 
-static int scan_ucode(const void *blob, char *ucode_base, int *countp,
-		      const char **datap, int *data_sizep)
-{
-	const char *data = NULL;
-	int node, count;
-	int data_size;
-	char *ucode;
-
-	for (node = 0, count = 0, ucode = ucode_base; node >= 0; count++) {
-		node = fdt_node_offset_by_compatible(blob, node,
-						     "intel,microcode");
-		if (node < 0)
-			break;
-
-		data = fdt_getprop(blob, node, "data", &data_size);
-		if (!data) {
-			debug("Missing microcode data in FDT '%s': %s\n",
-			      fdt_get_name(blob, node, NULL),
-			      fdt_strerror(data_size));
-			return -ENOENT;
-		}
-
-		if (ucode_base)
-			memcpy(ucode, data, data_size);
-		ucode += data_size;
-	}
-
-	if (countp)
-		*countp = count;
-	if (datap)
-		*datap = data;
-	if (data_sizep)
-		*data_sizep = data_size;
-
-	return ucode - ucode_base;
-}
-
-static int remove_ucode(char *blob)
-{
-	int node, count;
-	int ret;
-
-	/* Keep going until we find no more microcode to remove */
-	do {
-		for (node = 0, count = 0; node >= 0;) {
-			int ret;
-
-			node = fdt_node_offset_by_compatible(blob, node,
-							     "intel,microcode");
-			if (node < 0)
-				break;
-
-			ret = fdt_delprop(blob, node, "data");
-
-			/*
-			 * -FDT_ERR_NOTFOUND means we already removed the
-			 * data for this one, so we just continue.
-			 * 0 means we did remove it, so offsets may have
-			 * changed and we need to restart our scan.
-			 * Anything else indicates an error we should report.
-			 */
-			if (ret == -FDT_ERR_NOTFOUND)
-				continue;
-			else if (!ret)
-				node = 0;
-			else
-				return ret;
-		}
-	} while (count);
-
-	/* Pack down to remove excees space */
-	ret = fdt_pack(blob);
-	if (ret)
-		return ret;
-
-	return fdt_totalsize(blob);
-}
-
-static int write_ucode(char *image, int size, struct input_file *fdt,
-		       int fdt_size, unsigned int ucode_ptr,
-		       int collate_ucode)
-{
-	const char *data = NULL;
-	char *ucode_buf;
-	const void *blob;
-	char *ucode_base;
-	uint32_t *ptr;
-	int ucode_size;
-	int data_size;
-	int offset;
-	int count;
-	int ret;
-
-	blob = (void *)image + (uint32_t)(fdt->addr + size);
-
-	debug("DTB at %lx\n", (char *)blob - image);
-
-	/* Find out about the micrcode we have */
-	ucode_size = scan_ucode(blob, NULL, &count, &data, &data_size);
-	if (ucode_size < 0)
-		return ucode_size;
-	if (!count) {
-		debug("No microcode found in FDT\n");
-		return -ENOENT;
-	}
-
-	if (count > 1 && !collate_ucode) {
-		fprintf(stderr,
-			"Cannot handle multiple microcode blocks - please use -C flag to collate them\n");
-		return -EMLINK;
-	}
-
-	/*
-	 * Collect the microcode into a buffer, remove it from the device
-	 * tree and place it immediately above the (now smaller) device tree.
-	 */
-	if (collate_ucode && count > 1) {
-		ucode_buf = malloc(ucode_size);
-		if (!ucode_buf) {
-			fprintf(stderr,
-				"Out of memory for microcode (%d bytes)\n",
-				ucode_size);
-			return -ENOMEM;
-		}
-		ret = scan_ucode(blob, ucode_buf, NULL, NULL, NULL);
-		if (ret < 0)
-			return ret;
-
-		/* Remove the microcode from the device tree */
-		ret = remove_ucode((char *)blob);
-		if (ret < 0) {
-			debug("Could not remove FDT microcode: %s\n",
-			      fdt_strerror(ret));
-			return -EINVAL;
-		}
-		debug("Collated %d microcode block(s)\n", count);
-		debug("Device tree reduced from %x to %x bytes\n",
-		      fdt_size, ret);
-		fdt_size = ret;
-
-		/*
-		 * Place microcode area immediately above the FDT, aligned
-		 * to a 16-byte boundary.
-		 */
-		ucode_base = (char *)(((unsigned long)blob + fdt_size + 15) &
-				~15);
-
-		data = ucode_base;
-		data_size = ucode_size;
-		memcpy(ucode_base, ucode_buf, ucode_size);
-		free(ucode_buf);
-	}
-
-	offset = (uint32_t)(ucode_ptr + size);
-	ptr = (void *)image + offset;
-
-	ptr[0] = (data - image) - size;
-	ptr[1] = data_size;
-	debug("Wrote microcode pointer at %x: addr=%x, size=%x\n", ucode_ptr,
-	      ptr[0], ptr[1]);
-
-	return (collate_ucode ? data + data_size : (char *)blob + fdt_size) -
-			image;
-}
-
-/**
- * write_uboot() - Write U-Boot, device tree and microcode pointer
- *
- * This writes U-Boot into a place in the flash, followed by its device tree.
- * The microcode pointer is written so that U-Boot can find the microcode in
- * the device tree very early in boot.
- *
- * @image:	Pointer to image
- * @size:	Size of image in bytes
- * @uboot:	Input file information for u-boot.bin
- * @fdt:	Input file information for u-boot.dtb
- * @ucode_ptr:	Address in U-Boot where the microcode pointer should be placed
- * @return 0 if OK, -ve on error
- */
-static int write_uboot(char *image, int size, struct input_file *uboot,
-		       struct input_file *fdt, unsigned int ucode_ptr,
-		       int collate_ucode, int *offset_uboot_top,
-		       int *offset_uboot_start)
-{
-	int uboot_size, fdt_size;
-	int uboot_top;
-
-	uboot_size = write_data(image, size, uboot->addr, uboot->fname, 0, 0);
-	if (uboot_size < 0)
-		return uboot_size;
-	fdt->addr = uboot->addr + uboot_size;
-	debug("U-Boot size %#x, FDT at %#x\n", uboot_size, fdt->addr);
-	fdt_size = write_data(image, size, fdt->addr, fdt->fname, 0, 0);
-	if (fdt_size < 0)
-		return fdt_size;
-
-	uboot_top = (uint32_t)(fdt->addr + size) + fdt_size;
-
-	if (ucode_ptr) {
-		uboot_top = write_ucode(image, size, fdt, fdt_size, ucode_ptr,
-					collate_ucode);
-		if (uboot_top < 0)
-			return uboot_top;
-	}
-
-	if (offset_uboot_top && offset_uboot_start) {
-		*offset_uboot_top = uboot_top;
-		*offset_uboot_start = (uint32_t)(uboot->addr + size);
-	}
-
-	return 0;
-}
-
 static void print_version(void)
 {
 	printf("ifdtool v%s -- ", IFDTOOL_VERSION);
 	printf("Copyright (C) 2014 Google Inc.\n\n");
-	printf("SPDX-License-Identifier:	GPL-2.0+\n");
+	printf("SPDX-License-Identifier: GPL-2.0+\n");
 }
 
 static void print_usage(const char *name)
@@ -1012,7 +792,7 @@ static void print_usage(const char *name)
  * @str:	String to split
  * @firstp:	Returns first string
  * @secondp:	Returns second string
- * @return 0 if OK, -ve if @str does not have a :
+ * Return: 0 if OK, -ve if @str does not have a :
  */
 static int get_two_words(const char *str, char **firstp, char **secondp)
 {
@@ -1034,7 +814,7 @@ int main(int argc, char *argv[])
 	int mode_dump = 0, mode_extract = 0, mode_inject = 0;
 	int mode_spifreq = 0, mode_em100 = 0, mode_locked = 0;
 	int mode_unlocked = 0, mode_write = 0, mode_write_descriptor = 0;
-	int create = 0, collate_ucode = 0;
+	int create = 0;
 	char *region_type_string = NULL, *inject_fname = NULL;
 	char *desc_fname = NULL, *addr_str = NULL;
 	int region_type = -1, inputfreq = 0;
@@ -1047,14 +827,12 @@ int main(int argc, char *argv[])
 	char *outfile = NULL;
 	struct stat buf;
 	int size = 0;
-	unsigned int ucode_ptr = 0;
 	bool have_uboot = false;
 	int bios_fd;
 	char *image;
 	int ret;
 	static struct option long_options[] = {
 		{"create", 0, NULL, 'c'},
-		{"collate-microcode", 0, NULL, 'C'},
 		{"dump", 0, NULL, 'd'},
 		{"descriptor", 1, NULL, 'D'},
 		{"em100", 0, NULL, 'e'},
@@ -1062,7 +840,6 @@ int main(int argc, char *argv[])
 		{"fdt", 1, NULL, 'f'},
 		{"inject", 1, NULL, 'i'},
 		{"lock", 0, NULL, 'l'},
-		{"microcode", 1, NULL, 'm'},
 		{"romsize", 1, NULL, 'r'},
 		{"spifreq", 1, NULL, 's'},
 		{"unlock", 0, NULL, 'u'},
@@ -1073,14 +850,11 @@ int main(int argc, char *argv[])
 		{0, 0, 0, 0}
 	};
 
-	while ((opt = getopt_long(argc, argv, "cCdD:ef:hi:lm:r:s:uU:vw:x?",
+	while ((opt = getopt_long(argc, argv, "cdD:ef:hi:lr:s:uU:vw:x?",
 				  long_options, &option_index)) != EOF) {
 		switch (opt) {
 		case 'c':
 			create = 1;
-			break;
-		case 'C':
-			collate_ucode = 1;
 			break;
 		case 'd':
 			mode_dump = 1;
@@ -1118,9 +892,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'l':
 			mode_locked = 1;
-			break;
-		case 'm':
-			ucode_ptr = strtoul(optarg, NULL, 0);
 			break;
 		case 'r':
 			rom_size = strtol(optarg, NULL, 0);
@@ -1166,12 +937,6 @@ int main(int argc, char *argv[])
 					exit(EXIT_FAILURE);
 				}
 				ifile->addr = strtoll(optarg, NULL, 0);
-				ifile->type = opt == 'f' ? IF_fdt :
-					opt == 'U' ? IF_uboot : IF_normal;
-				if (ifile->type == IF_fdt)
-					fdt = ifile;
-				else if (ifile->type == IF_uboot)
-					have_uboot = true;
 				wr_num++;
 			} else {
 				fprintf(stderr,
@@ -1302,18 +1067,9 @@ int main(int argc, char *argv[])
 
 		for (wr_idx = 0; wr_idx < wr_num; wr_idx++) {
 			ifile = &input_file[wr_idx];
-			if (ifile->type == IF_fdt) {
-				continue;
-			} else if (ifile->type == IF_uboot) {
-				ret = write_uboot(image, size, ifile, fdt,
-						  ucode_ptr, collate_ucode,
-						  &offset_uboot_top,
-						  &offset_uboot_start);
-			} else {
-				ret = write_data(image, size, ifile->addr,
-						 ifile->fname, offset_uboot_top,
-						 offset_uboot_start);
-			}
+			ret = write_data(image, size, ifile->addr,
+					 ifile->fname, offset_uboot_top,
+					 offset_uboot_start);
 			if (ret < 0)
 				break;
 		}

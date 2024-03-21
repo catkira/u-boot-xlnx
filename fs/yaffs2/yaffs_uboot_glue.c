@@ -21,6 +21,7 @@
 
 #include <common.h>
 #include <div64.h>
+#include <malloc.h>
 
 #include <config.h>
 #include "nand.h"
@@ -34,6 +35,7 @@
 #else
 #include "malloc.h"
 #endif
+#include <linux/mtd/rawnand.h>
 
 unsigned yaffs_trace_mask = 0x0; /* Disable logging */
 static int yaffs_errno;
@@ -166,10 +168,14 @@ void cmd_yaffs_devconfig(char *_mp, int flash_dev,
 	char *mp = NULL;
 	struct nand_chip *chip;
 
+	mtd = get_nand_dev_by_index(flash_dev);
+	if (!mtd) {
+		pr_err("\nno NAND devices available\n");
+		return;
+	}
+
 	dev = calloc(1, sizeof(*dev));
 	mp = strdup(_mp);
-
-	mtd = nand_info[flash_dev];
 
 	if (!dev || !mp) {
 		/* Alloc error */
@@ -320,7 +326,7 @@ void read_a_file(char *fn)
 		i++;
 		if (i > 32) {
 			printf("\n");
-			i = 0;;
+			i = 0;
 		}
 	}
 	printf("\n");

@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2008 Extreme Engineering Solutions, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -29,7 +28,7 @@ int board_flash_wp_on(void)
 uint get_board_derivative(void)
 {
 #if defined(CONFIG_MPC85xx)
-       volatile ccsr_gur_t *gur = (void *)CONFIG_SYS_MPC85xx_GUTS_ADDR;
+       volatile ccsr_gur_t *gur = (void *)CFG_SYS_MPC85xx_GUTS_ADDR;
 #elif defined(CONFIG_MPC86xx)
        volatile immap_t *immap = (immap_t *)CONFIG_SYS_CCSRBAR;
        volatile ccsr_gur_t *gur = &immap->im_gur;

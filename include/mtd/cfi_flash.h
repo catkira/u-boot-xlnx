@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2009
  * Stefan Roese, DENX Software Engineering, sr@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __CFI_FLASH_H__
@@ -62,6 +61,7 @@
 
 #define FLASH_OFFSET_MANUFACTURER_ID	0x00
 #define FLASH_OFFSET_DEVICE_ID		0x01
+#define FLASH_OFFSET_LOWER_SW_BITS	0x0C
 #define FLASH_OFFSET_DEVICE_ID2		0x0E
 #define FLASH_OFFSET_DEVICE_ID3		0x0F
 #define FLASH_OFFSET_CFI		0x55
@@ -154,22 +154,28 @@ struct cfi_pri_hdr {
 /*
  * CFI_MAX_FLASH_BANKS only used for flash_info struct declaration.
  *
- * Use CONFIG_SYS_MAX_FLASH_BANKS_DETECT if defined
+ * CFI_FLASH_BANKS selects the correct number of available banks =
+ * cfi_flash_num_flash_banks when CONFIG_SYS_MAX_FLASH_BANKS_DETECT is defined
+ * or CONFIG_SYS_MAX_FLASH_BANKS
  */
+#define CFI_MAX_FLASH_BANKS	CONFIG_SYS_MAX_FLASH_BANKS
+
 #if defined(CONFIG_SYS_MAX_FLASH_BANKS_DETECT)
-#define CONFIG_SYS_MAX_FLASH_BANKS	(cfi_flash_num_flash_banks)
-#define CFI_MAX_FLASH_BANKS	CONFIG_SYS_MAX_FLASH_BANKS_DETECT
+/* map to cfi_flash_num_flash_banks only when supported */
+#if IS_ENABLED(CONFIG_FLASH_CFI_DRIVER) && \
+    (!IS_ENABLED(CONFIG_SPL_BUILD) || IS_ENABLED(CONFIG_SPL_MTD_SUPPORT))
+#define CFI_FLASH_BANKS		(cfi_flash_num_flash_banks)
 /* board code can update this variable before CFI detection */
 extern int cfi_flash_num_flash_banks;
-#else
-#define CFI_MAX_FLASH_BANKS	CONFIG_SYS_MAX_FLASH_BANKS
+#endif
+#endif
+/* default when bank detection is not supported */
+#ifndef CFI_FLASH_BANKS
+#define CFI_FLASH_BANKS		CONFIG_SYS_MAX_FLASH_BANKS
 #endif
 
-void flash_write_cmd(flash_info_t * info, flash_sect_t sect,
-		     uint offset, u32 cmd);
 phys_addr_t cfi_flash_bank_addr(int i);
 unsigned long cfi_flash_bank_size(int i);
-void flash_cmd_reset(flash_info_t *info);
 
 #ifdef CONFIG_CFI_FLASH_USE_WEAK_ACCESSORS
 void flash_write8(u8 value, void *addr);

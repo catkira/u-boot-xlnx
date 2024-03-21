@@ -1,311 +1,422 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2002-2007
- * Detlev Zundel, DENX Software Engineering, dzu@denx.de.
- *
- * Code used from linux/kernel/printk.c
- * Copyright (C) 1991, 1992  Linus Torvalds
- *
- * SPDX-License-Identifier:	GPL-2.0+
- *
- * Comments:
- *
- * After relocating the code, the environment variable "loglevel" is
- * copied to console_loglevel.  The functionality is similar to the
- * handling in the Linux kernel, i.e. messages logged with a priority
- * less than console_loglevel are also output to stdout.
- *
- * If you want messages with the default level (e.g. POST messages) to
- * appear on stdout also, make sure the environment variable
- * "loglevel" is set at boot time to a number higher than
- * default_message_loglevel below.
- */
-
-/*
- * Logbuffer handling routines
+ * Copyright (c) 2017 Google, Inc
+ * Written by Simon Glass <sjg@chromium.org>
  */
 
 #include <common.h>
 #include <command.h>
-#include <stdio_dev.h>
-#include <post.h>
-#include <logbuff.h>
+#include <dm.h>
+#include <getopt.h>
+#include <log.h>
+#include <malloc.h>
+#include <asm/global_data.h>
 
-DECLARE_GLOBAL_DATA_PTR;
+static char log_fmt_chars[LOGF_COUNT] = "clFLfm";
 
-/* Local prototypes */
-static void logbuff_putc(struct stdio_dev *dev, const char c);
-static void logbuff_puts(struct stdio_dev *dev, const char *s);
-static int logbuff_printk(const char *line);
-
-static char buf[1024];
-
-/* This combination will not print messages with the default loglevel */
-static unsigned console_loglevel = 3;
-static unsigned default_message_loglevel = 4;
-static unsigned log_version = 1;
-#ifdef CONFIG_ALT_LB_ADDR
-static volatile logbuff_t *log;
-#else
-static logbuff_t *log;
-#endif
-static char *lbuf;
-
-unsigned long __logbuffer_base(void)
+static enum log_level_t parse_log_level(char *const arg)
 {
-	return CONFIG_SYS_SDRAM_BASE + get_effective_memsize() - LOGBUFF_LEN;
-}
-unsigned long logbuffer_base(void)
-__attribute__((weak, alias("__logbuffer_base")));
+	enum log_level_t ret;
+	ulong level;
 
-void logbuff_init_ptrs(void)
-{
-	unsigned long tag, post_word;
-	char *s;
-
-#ifdef CONFIG_ALT_LB_ADDR
-	log = (logbuff_t *)CONFIG_ALT_LH_ADDR;
-	lbuf = (char *)CONFIG_ALT_LB_ADDR;
-#else
-	log = (logbuff_t *)(logbuffer_base()) - 1;
-	lbuf = (char *)log->buf;
-#endif
-
-	/* Set up log version */
-	if ((s = getenv ("logversion")) != NULL)
-		log_version = (int)simple_strtoul(s, NULL, 10);
-
-	if (log_version == 2)
-		tag = log->v2.tag;
-	else
-		tag = log->v1.tag;
-	post_word = post_word_load();
-#ifdef CONFIG_POST
-	/* The post routines have setup the word so we can simply test it */
-	if (tag != LOGBUFF_MAGIC || (post_word & POST_COLDBOOT))
-		logbuff_reset();
-#else
-	/* No post routines, so we do our own checking                    */
-	if (tag != LOGBUFF_MAGIC || post_word != LOGBUFF_MAGIC) {
-		logbuff_reset ();
-		post_word_store (LOGBUFF_MAGIC);
+	if (!strict_strtoul(arg, 10, &level)) {
+		if (level > _LOG_MAX_LEVEL) {
+			printf("Only log levels <= %d are supported\n",
+			       _LOG_MAX_LEVEL);
+			return LOGL_NONE;
+		}
+		return level;
 	}
-#endif
-	if (log_version == 2 && (long)log->v2.start > (long)log->v2.con)
-		log->v2.start = log->v2.con;
 
-	/* Initialize default loglevel if present */
-	if ((s = getenv ("loglevel")) != NULL)
-		console_loglevel = (int)simple_strtoul(s, NULL, 10);
-
-	gd->flags |= GD_FLG_LOGINIT;
+	ret = log_get_level_by_name(arg);
+	if (ret == LOGL_NONE)
+		printf("Unknown log level \"%s\"\n", arg);
+	return ret;
 }
 
-void logbuff_reset(void)
+static int do_log_level(struct cmd_tbl *cmdtp, int flag, int argc,
+			char *const argv[])
 {
-#ifndef CONFIG_ALT_LB_ADDR
-	memset(log, 0, sizeof(logbuff_t));
-#endif
-	if (log_version == 2) {
-		log->v2.tag = LOGBUFF_MAGIC;
-#ifdef CONFIG_ALT_LB_ADDR
-		log->v2.start = 0;
-		log->v2.con = 0;
-		log->v2.end = 0;
-		log->v2.chars = 0;
-#endif
+	enum log_level_t log_level;
+
+	if (argc > 1) {
+		log_level = parse_log_level(argv[1]);
+
+		if (log_level == LOGL_NONE)
+			return CMD_RET_FAILURE;
+		gd->default_log_level = log_level;
 	} else {
-		log->v1.tag = LOGBUFF_MAGIC;
-#ifdef CONFIG_ALT_LB_ADDR
-		log->v1.dummy = 0;
-		log->v1.start = 0;
-		log->v1.size = 0;
-		log->v1.chars = 0;
-#endif
+		for (log_level = LOGL_FIRST; log_level <= _LOG_MAX_LEVEL;
+		     log_level++)
+			printf("%s%s\n", log_get_level_name(log_level),
+			       log_level == gd->default_log_level ?
+			       " (default)" : "");
 	}
+
+	return CMD_RET_SUCCESS;
 }
 
-int drv_logbuff_init(void)
+static int do_log_categories(struct cmd_tbl *cmdtp, int flag, int argc,
+			     char *const argv[])
 {
-	struct stdio_dev logdev;
-	int rc;
+	enum log_category_t cat;
+	const char *name;
 
-	/* Device initialization */
-	memset (&logdev, 0, sizeof (logdev));
-
-	strcpy (logdev.name, "logbuff");
-	logdev.ext   = 0;			/* No extensions */
-	logdev.flags = DEV_FLAGS_OUTPUT;	/* Output only */
-	logdev.putc  = logbuff_putc;		/* 'putc' function */
-	logdev.puts  = logbuff_puts;		/* 'puts' function */
-
-	rc = stdio_register(&logdev);
-
-	return (rc == 0) ? 1 : rc;
-}
-
-static void logbuff_putc(struct stdio_dev *dev, const char c)
-{
-	char buf[2];
-	buf[0] = c;
-	buf[1] = '\0';
-	logbuff_printk(buf);
-}
-
-static void logbuff_puts(struct stdio_dev *dev, const char *s)
-{
-	logbuff_printk (s);
-}
-
-void logbuff_log(char *msg)
-{
-	if ((gd->flags & GD_FLG_LOGINIT)) {
-		logbuff_printk(msg);
-	} else {
+	for (cat = LOGC_FIRST; cat < LOGC_COUNT; cat++) {
+		name = log_get_cat_name(cat);
 		/*
-		 * Can happen only for pre-relocated errors as logging
-		 * at that stage should be disabled
+		 * Invalid category names (e.g. <invalid> or <missing>) begin
+		 * with '<'.
 		 */
-		puts (msg);
+		if (name[0] == '<')
+			continue;
+		printf("%s\n", name);
 	}
+
+	return CMD_RET_SUCCESS;
 }
 
-/*
- * Subroutine:  do_log
- *
- * Description: Handler for 'log' command..
- *
- * Inputs:	argv[1] contains the subcommand
- *
- * Return:      None
- *
- */
-int do_log(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+static int do_log_drivers(struct cmd_tbl *cmdtp, int flag, int argc,
+			  char *const argv[])
 {
-	struct stdio_dev *sdev = NULL;
-	char *s;
-	unsigned long i, start, size;
+	struct log_device *ldev;
 
-	if (strcmp(argv[1], "append") == 0) {
-		/* Log concatenation of all arguments separated by spaces */
-		for (i = 2; i < argc; i++) {
-			logbuff_printk(argv[i]);
-			logbuff_putc(sdev, (i < argc - 1) ? ' ' : '\n');
-		}
-		return 0;
-	}
+	list_for_each_entry(ldev, &gd->log_head, sibling_node)
+		printf("%s\n", ldev->drv->name);
 
-	switch (argc) {
-
-	case 2:
-		if (strcmp(argv[1], "show") == 0) {
-			if (log_version == 2) {
-				start = log->v2.start;
-				size = log->v2.end - log->v2.start;
-			} else {
-				start = log->v1.start;
-				size = log->v1.size;
-			}
-			if (size > LOGBUFF_LEN)
-				size = LOGBUFF_LEN;
-			for (i = 0; i < size; i++) {
-				s = lbuf + ((start + i) & LOGBUFF_MASK);
-				putc(*s);
-			}
-			return 0;
-		} else if (strcmp(argv[1], "reset") == 0) {
-			logbuff_reset();
-			return 0;
-		} else if (strcmp(argv[1], "info") == 0) {
-			printf("Logbuffer   at  %08lx\n", (unsigned long)lbuf);
-			if (log_version == 2) {
-				printf("log_start    =  %08lx\n",
-					log->v2.start);
-				printf("log_end      =  %08lx\n", log->v2.end);
-				printf("log_con      =  %08lx\n", log->v2.con);
-				printf("logged_chars =  %08lx\n",
-					log->v2.chars);
-			}
-			else {
-				printf("log_start    =  %08lx\n",
-					log->v1.start);
-				printf("log_size     =  %08lx\n",
-					log->v1.size);
-				printf("logged_chars =  %08lx\n",
-					log->v1.chars);
-			}
-			return 0;
-		}
-		return CMD_RET_USAGE;
-
-	default:
-		return CMD_RET_USAGE;
-	}
+	return CMD_RET_SUCCESS;
 }
 
-U_BOOT_CMD(
-	log,     255,	1,	do_log,
-	"manipulate logbuffer",
-	"info   - show pointer details\n"
-	"log reset  - clear contents\n"
-	"log show   - show contents\n"
-	"log append <msg> - append <msg> to the logbuffer"
-);
+static int do_log_filter_list(struct cmd_tbl *cmdtp, int flag, int argc,
+			      char *const argv[])
+{
+	int opt;
+	const char *drv_name = "console";
+	struct getopt_state gs;
+	struct log_filter *filt;
+	struct log_device *ldev;
 
-static int logbuff_printk(const char *line)
+	getopt_init_state(&gs);
+	while ((opt = getopt(&gs, argc, argv, "d:")) > 0) {
+		switch (opt) {
+		case 'd':
+			drv_name = gs.arg;
+			break;
+		default:
+			return CMD_RET_USAGE;
+		}
+	}
+
+	if (gs.index != argc)
+		return CMD_RET_USAGE;
+
+	ldev = log_device_find_by_name(drv_name);
+	if (!ldev) {
+		printf("Could not find log device for \"%s\"\n", drv_name);
+		return CMD_RET_FAILURE;
+	}
+
+	/*      <3> < 6  > <2+1 + 7 > <      16      > < unbounded... */
+	printf("num policy level            categories files\n");
+	list_for_each_entry(filt, &ldev->filter_head, sibling_node) {
+		printf("%3d %6.6s %s %-7.7s ", filt->filter_num,
+		       filt->flags & LOGFF_DENY ? "deny" : "allow",
+		       filt->flags & LOGFF_LEVEL_MIN ? ">=" : "<=",
+		       log_get_level_name(filt->level));
+
+		if (filt->flags & LOGFF_HAS_CAT) {
+			int i;
+
+			if (filt->cat_list[0] != LOGC_END)
+				printf("%16.16s %s\n",
+				       log_get_cat_name(filt->cat_list[0]),
+				       filt->file_list ? filt->file_list : "");
+
+			for (i = 1; i < LOGF_MAX_CATEGORIES &&
+				    filt->cat_list[i] != LOGC_END; i++)
+				printf("%21c %16.16s\n", ' ',
+				       log_get_cat_name(filt->cat_list[i]));
+		} else {
+			printf("%16c %s\n", ' ',
+			       filt->file_list ? filt->file_list : "");
+		}
+	}
+
+	return CMD_RET_SUCCESS;
+}
+
+static int do_log_filter_add(struct cmd_tbl *cmdtp, int flag, int argc,
+			     char *const argv[])
+{
+	bool level_set = false;
+	bool print_num = false;
+	bool type_set = false;
+	char *file_list = NULL;
+	const char *drv_name = "console";
+	int opt, err;
+	int cat_count = 0;
+	int flags = 0;
+	enum log_category_t cat_list[LOGF_MAX_CATEGORIES + 1];
+	enum log_level_t level = LOGL_MAX;
+	struct getopt_state gs;
+
+	getopt_init_state(&gs);
+	while ((opt = getopt(&gs, argc, argv, "Ac:d:Df:l:L:p")) > 0) {
+		switch (opt) {
+		case 'A':
+#define do_type() do { \
+			if (type_set) { \
+				printf("Allow or deny set twice\n"); \
+				return CMD_RET_USAGE; \
+			} \
+			type_set = true; \
+} while (0)
+			do_type();
+			break;
+		case 'c': {
+			enum log_category_t cat;
+
+			if (cat_count >= LOGF_MAX_CATEGORIES) {
+				printf("Too many categories\n");
+				return CMD_RET_FAILURE;
+			}
+
+			cat = log_get_cat_by_name(gs.arg);
+			if (cat == LOGC_NONE) {
+				printf("Unknown category \"%s\"\n", gs.arg);
+				return CMD_RET_FAILURE;
+			}
+
+			cat_list[cat_count++] = cat;
+			break;
+		}
+		case 'd':
+			drv_name = gs.arg;
+			break;
+		case 'D':
+			do_type();
+			flags |= LOGFF_DENY;
+			break;
+		case 'f':
+			file_list = gs.arg;
+			break;
+		case 'l':
+#define do_level() do { \
+			if (level_set) { \
+				printf("Log level set twice\n"); \
+				return CMD_RET_USAGE; \
+			} \
+			level = parse_log_level(gs.arg); \
+			if (level == LOGL_NONE) \
+				return CMD_RET_FAILURE; \
+			level_set = true; \
+} while (0)
+			do_level();
+			break;
+		case 'L':
+			do_level();
+			flags |= LOGFF_LEVEL_MIN;
+			break;
+		case 'p':
+			print_num = true;
+			break;
+		default:
+			return CMD_RET_USAGE;
+		}
+	}
+
+	if (gs.index != argc)
+		return CMD_RET_USAGE;
+
+	cat_list[cat_count] = LOGC_END;
+	err = log_add_filter_flags(drv_name, cat_count ? cat_list : NULL, level,
+				   file_list, flags);
+	if (err < 0) {
+		printf("Could not add filter (err = %d)\n", err);
+		return CMD_RET_FAILURE;
+	} else if (print_num) {
+		printf("%d\n", err);
+	}
+
+	return CMD_RET_SUCCESS;
+}
+
+static int do_log_filter_remove(struct cmd_tbl *cmdtp, int flag, int argc,
+				char *const argv[])
+{
+	bool all = false;
+	int opt, err;
+	ulong filter_num;
+	const char *drv_name = "console";
+	struct getopt_state gs;
+
+	getopt_init_state(&gs);
+	while ((opt = getopt(&gs, argc, argv, "ad:")) > 0) {
+		switch (opt) {
+		case 'a':
+			all = true;
+			break;
+		case 'd':
+			drv_name = gs.arg;
+			break;
+		default:
+			return CMD_RET_USAGE;
+		}
+	}
+
+	if (all) {
+		struct log_filter *filt, *tmp_filt;
+		struct log_device *ldev;
+
+		if (gs.index != argc)
+			return CMD_RET_USAGE;
+
+		ldev = log_device_find_by_name(drv_name);
+		if (!ldev) {
+			printf("Could not find log device for \"%s\"\n",
+			       drv_name);
+			return CMD_RET_FAILURE;
+		}
+
+		list_for_each_entry_safe(filt, tmp_filt, &ldev->filter_head,
+					 sibling_node) {
+			list_del(&filt->sibling_node);
+			free(filt);
+		}
+	} else {
+		if (gs.index + 1 != argc)
+			return CMD_RET_USAGE;
+
+		if (strict_strtoul(argv[gs.index], 10, &filter_num)) {
+			printf("Invalid filter number \"%s\"\n", argv[gs.index]);
+			return CMD_RET_FAILURE;
+		}
+
+		err = log_remove_filter(drv_name, filter_num);
+		if (err) {
+			printf("Could not remove filter (err = %d)\n", err);
+			return CMD_RET_FAILURE;
+		}
+	}
+
+	return CMD_RET_SUCCESS;
+}
+
+static int do_log_format(struct cmd_tbl *cmdtp, int flag, int argc,
+			 char *const argv[])
 {
 	int i;
-	char *msg, *p, *buf_end;
-	int line_feed;
-	static signed char msg_level = -1;
 
-	strcpy(buf + 3, line);
-	i = strlen(line);
-	buf_end = buf + 3 + i;
-	for (p = buf + 3; p < buf_end; p++) {
-		msg = p;
-		if (msg_level < 0) {
-			if (
-				p[0] != '<' ||
-				p[1] < '0' ||
-				p[1] > '7' ||
-				p[2] != '>'
-			) {
-				p -= 3;
-				p[0] = '<';
-				p[1] = default_message_loglevel + '0';
-				p[2] = '>';
-			} else {
-				msg += 3;
-			}
-			msg_level = p[1] - '0';
-		}
-		line_feed = 0;
-		for (; p < buf_end; p++) {
-			if (log_version == 2) {
-				lbuf[log->v2.end & LOGBUFF_MASK] = *p;
-				log->v2.end++;
-				if (log->v2.end - log->v2.start > LOGBUFF_LEN)
-					log->v2.start++;
-				log->v2.chars++;
-			} else {
-				lbuf[(log->v1.start + log->v1.size) &
-					 LOGBUFF_MASK] = *p;
-				if (log->v1.size < LOGBUFF_LEN)
-					log->v1.size++;
-				else
-					log->v1.start++;
-				log->v1.chars++;
-			}
-			if (*p == '\n') {
-				line_feed = 1;
-				break;
+	if (argc > 1) {
+		const char *str = argv[1];
+
+		if (!strcmp(str, "default")) {
+			gd->log_fmt = log_get_default_format();
+		} else if (!strcmp(str, "all")) {
+			gd->log_fmt = LOGF_ALL;
+		} else {
+			gd->log_fmt = 0;
+			for (; *str; str++) {
+				char *ptr = strchr(log_fmt_chars, *str);
+
+				if (!ptr) {
+					printf("Invalid log char '%c'\n", *str);
+					return CMD_RET_FAILURE;
+				}
+				gd->log_fmt |= 1 << (ptr - log_fmt_chars);
 			}
 		}
-		if (msg_level < console_loglevel) {
-			printf("%s", msg);
+	} else {
+		printf("Log format: ");
+		for (i = 0; i < LOGF_COUNT; i++) {
+			if (gd->log_fmt & (1 << i))
+				printf("%c", log_fmt_chars[i]);
 		}
-		if (line_feed)
-			msg_level = -1;
+		printf("\n");
 	}
-	return i;
+
+	return 0;
 }
+
+static int do_log_rec(struct cmd_tbl *cmdtp, int flag, int argc,
+		      char *const argv[])
+{
+	enum log_category_t cat;
+	enum log_level_t level;
+	const char *file;
+	uint line;
+	const char *func;
+	const char *msg;
+	char *end;
+
+	if (argc < 7)
+		return CMD_RET_USAGE;
+	cat = log_get_cat_by_name(argv[1]);
+	level = dectoul(argv[2], &end);
+	if (end == argv[2]) {
+		level = log_get_level_by_name(argv[2]);
+
+		if (level == LOGL_NONE) {
+			printf("Invalid log level '%s'\n", argv[2]);
+			return CMD_RET_USAGE;
+		}
+	}
+	if (level >= LOGL_MAX) {
+		printf("Invalid log level %u\n", level);
+		return CMD_RET_USAGE;
+	}
+	file = argv[3];
+	line = dectoul(argv[4], NULL);
+	func = argv[5];
+	msg = argv[6];
+	if (_log(cat, level, file, line, func, "%s\n", msg))
+		return CMD_RET_FAILURE;
+
+	return 0;
+}
+
+#ifdef CONFIG_SYS_LONGHELP
+static char log_help_text[] =
+	"level [<level>] - get/set log level\n"
+	"categories - list log categories\n"
+	"drivers - list log drivers\n"
+	"log filter-list [OPTIONS] - list all filters for a log driver\n"
+	"\t-d <driver> - Specify the log driver to list filters from; defaults\n"
+	"\t              to console\n"
+	"log filter-add [OPTIONS] - add a new filter to a driver\n"
+	"\t-A - Allow messages matching this filter; mutually exclusive with -D\n"
+	"\t     This is the default.\n"
+	"\t-c <category> - Category to match; may be specified multiple times\n"
+	"\t-d <driver> - Specify the log driver to add the filter to; defaults\n"
+	"\t              to console\n"
+	"\t-D - Deny messages matching this filter; mutually exclusive with -A\n"
+	"\t-f <files_list> - A comma-separated list of files to match\n"
+	"\t-l <level> - Match log levels less than or equal to <level>;\n"
+	"\t             mutually-exclusive with -L\n"
+	"\t-L <level> - Match log levels greather than or equal to <level>;\n"
+	"\t             mutually-exclusive with -l\n"
+	"\t-p - Print the filter number on success\n"
+	"log filter-remove [OPTIONS] [<num>] - Remove filter number <num>\n"
+	"\t-a - Remove ALL filters\n"
+	"\t-d <driver> - Specify the log driver to remove the filter from;\n"
+	"\t              defaults to console\n"
+	"log format <fmt> - set log output format. <fmt> is a string where\n"
+	"\teach letter indicates something that should be displayed:\n"
+	"\tc=category, l=level, F=file, L=line number, f=function, m=msg\n"
+	"\tor 'default', or 'all' for all\n"
+	"log rec <category> <level> <file> <line> <func> <message> - "
+		"output a log record"
+	;
+#endif
+
+U_BOOT_CMD_WITH_SUBCMDS(log, "log system", log_help_text,
+	U_BOOT_SUBCMD_MKENT(level, 2, 1, do_log_level),
+	U_BOOT_SUBCMD_MKENT(categories, 1, 1, do_log_categories),
+	U_BOOT_SUBCMD_MKENT(drivers, 1, 1, do_log_drivers),
+	U_BOOT_SUBCMD_MKENT(filter-list, 3, 1, do_log_filter_list),
+	U_BOOT_SUBCMD_MKENT(filter-add, CONFIG_SYS_MAXARGS, 1,
+			    do_log_filter_add),
+	U_BOOT_SUBCMD_MKENT(filter-remove, 4, 1, do_log_filter_remove),
+	U_BOOT_SUBCMD_MKENT(format, 2, 1, do_log_format),
+	U_BOOT_SUBCMD_MKENT(rec, 7, 1, do_log_rec),
+);

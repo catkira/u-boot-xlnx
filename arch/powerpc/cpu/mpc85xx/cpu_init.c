@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2007-2011 Freescale Semiconductor, Inc.
  *
@@ -6,11 +7,13 @@
  *
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <display_options.h>
+#include <env.h>
+#include <init.h>
+#include <net.h>
 #include <watchdog.h>
 #include <asm/processor.h>
 #include <ioports.h>
@@ -26,10 +29,12 @@
 #ifdef CONFIG_FSL_CORENET
 #include <asm/fsl_portals.h>
 #include <asm/fsl_liodn.h>
+#include <fsl_qbman.h>
 #endif
 #include <fsl_usb.h>
 #include <hwconfig.h>
 #include <linux/compiler.h>
+#include <linux/delay.h>
 #include "mp.h"
 #ifdef CONFIG_CHAIN_OF_TRUST
 #include <fsl_validate.h>
@@ -37,7 +42,7 @@
 #ifdef CONFIG_FSL_CAAM
 #include <fsl_sec.h>
 #endif
-#if defined(CONFIG_SECURE_BOOT) && defined(CONFIG_FSL_CORENET)
+#if defined(CONFIG_NXP_ESBC) && defined(CONFIG_FSL_CORENET)
 #include <asm/fsl_pamu.h>
 #include <fsl_secboot_err.h>
 #endif
@@ -45,13 +50,14 @@
 #include <nand.h>
 #include <errno.h>
 #endif
-
-#include "../../../../drivers/block/fsl_sata.h"
+#ifndef CONFIG_ARCH_QEMU_E500
+#include <fsl_ddr.h>
+#endif
+#include "../../../../drivers/ata/fsl_sata.h"
 #ifdef CONFIG_U_QE
 #include <fsl_qe.h>
 #endif
-
-DECLARE_GLOBAL_DATA_PTR;
+#include <dm.h>
 
 #ifdef CONFIG_SYS_FSL_SINGLE_SOURCE_CLK
 /*
@@ -114,10 +120,10 @@ void fsl_erratum_a006261_workaround(struct ccsr_usb_phy __iomem *usb_phy)
 	setbits_be32(&usb_phy->config2,
 		     CONFIG_SYS_FSL_USB_RX_AUTO_CAL_RD_WR_SEL);
 
-	temp = squelch_prog_rd_0_2 << CONFIG_SYS_FSL_USB_SQUELCH_PROG_WR_0;
+	temp = squelch_prog_rd_0_2 << CONFIG_SYS_FSL_USB_SQUELCH_PROG_WR_3;
 	out_be32(&usb_phy->config2, in_be32(&usb_phy->config2) | temp);
 
-	temp = squelch_prog_rd_3_5 << CONFIG_SYS_FSL_USB_SQUELCH_PROG_WR_3;
+	temp = squelch_prog_rd_3_5 << CONFIG_SYS_FSL_USB_SQUELCH_PROG_WR_0;
 	out_be32(&usb_phy->config2, in_be32(&usb_phy->config2) | temp);
 #endif
 }
@@ -148,77 +154,13 @@ static void config_qe_ioports(void)
 }
 #endif
 
-#ifdef CONFIG_CPM2
-void config_8560_ioports (volatile ccsr_cpm_t * cpm)
-{
-	int portnum;
-
-	for (portnum = 0; portnum < 4; portnum++) {
-		uint pmsk = 0,
-		     ppar = 0,
-		     psor = 0,
-		     pdir = 0,
-		     podr = 0,
-		     pdat = 0;
-		iop_conf_t *iopc = (iop_conf_t *) & iop_conf_tab[portnum][0];
-		iop_conf_t *eiopc = iopc + 32;
-		uint msk = 1;
-
-		/*
-		 * NOTE:
-		 * index 0 refers to pin 31,
-		 * index 31 refers to pin 0
-		 */
-		while (iopc < eiopc) {
-			if (iopc->conf) {
-				pmsk |= msk;
-				if (iopc->ppar)
-					ppar |= msk;
-				if (iopc->psor)
-					psor |= msk;
-				if (iopc->pdir)
-					pdir |= msk;
-				if (iopc->podr)
-					podr |= msk;
-				if (iopc->pdat)
-					pdat |= msk;
-			}
-
-			msk <<= 1;
-			iopc++;
-		}
-
-		if (pmsk != 0) {
-			volatile ioport_t *iop = ioport_addr (cpm, portnum);
-			uint tpmsk = ~pmsk;
-
-			/*
-			 * the (somewhat confused) paragraph at the
-			 * bottom of page 35-5 warns that there might
-			 * be "unknown behaviour" when programming
-			 * PSORx and PDIRx, if PPARx = 1, so I
-			 * decided this meant I had to disable the
-			 * dedicated function first, and enable it
-			 * last.
-			 */
-			iop->ppar &= tpmsk;
-			iop->psor = (iop->psor & tpmsk) | psor;
-			iop->podr = (iop->podr & tpmsk) | podr;
-			iop->pdat = (iop->pdat & tpmsk) | pdat;
-			iop->pdir = (iop->pdir & tpmsk) | pdir;
-			iop->ppar |= ppar;
-		}
-	}
-}
-#endif
-
 #ifdef CONFIG_SYS_FSL_CPC
 #if defined(CONFIG_RAMBOOT_PBL) || defined(CONFIG_SYS_CPC_REINIT_F)
 void disable_cpc_sram(void)
 {
 	int i;
 
-	cpc_corenet_t *cpc = (cpc_corenet_t *)CONFIG_SYS_FSL_CPC_ADDR;
+	cpc_corenet_t *cpc = (cpc_corenet_t *)CFG_SYS_FSL_CPC_ADDR;
 
 	for (i = 0; i < CONFIG_SYS_NUM_CPC; i++, cpc++) {
 		if (in_be32(&cpc->cpcsrcr0) & CPC_SRCR0_SRAMEN) {
@@ -254,7 +196,7 @@ static void enable_tdm_law(void)
 	 * is not setup properly yet. Search for tdm entry in
 	 * hwconfig.
 	 */
-	ret = getenv_f("hwconfig", buffer, sizeof(buffer));
+	ret = env_get_f("hwconfig", buffer, sizeof(buffer));
 	if (ret > 0) {
 		tdm_hwconfig_enabled = hwconfig_f("tdm", buffer);
 		/* If tdm is defined in hwconfig, set law for tdm workaround */
@@ -275,10 +217,10 @@ void enable_cpc(void)
 	char cpc_subarg[16];
 	bool have_hwconfig = false;
 	int cpc_args = 0;
-	cpc_corenet_t *cpc = (cpc_corenet_t *)CONFIG_SYS_FSL_CPC_ADDR;
+	cpc_corenet_t *cpc = (cpc_corenet_t *)CFG_SYS_FSL_CPC_ADDR;
 
 	/* Extract hwconfig from environment */
-	ret = getenv_f("hwconfig", buffer, sizeof(buffer));
+	ret = env_get_f("hwconfig", buffer, sizeof(buffer));
 	if (ret > 0) {
 		/*
 		 * If "en_cpc" is not defined in hwconfig then by default all
@@ -329,7 +271,7 @@ void enable_cpc(void)
 static void invalidate_cpc(void)
 {
 	int i;
-	cpc_corenet_t *cpc = (cpc_corenet_t *)CONFIG_SYS_FSL_CPC_ADDR;
+	cpc_corenet_t *cpc = (cpc_corenet_t *)CFG_SYS_FSL_CPC_ADDR;
 
 	for (i = 0; i < CONFIG_SYS_NUM_CPC; i++, cpc++) {
 		/* skip CPC when it used as all SRAM */
@@ -358,9 +300,9 @@ static void invalidate_cpc(void)
 static void corenet_tb_init(void)
 {
 	volatile ccsr_rcpm_t *rcpm =
-		(void *)(CONFIG_SYS_FSL_CORENET_RCPM_ADDR);
+		(void *)(CFG_SYS_FSL_CORENET_RCPM_ADDR);
 	volatile ccsr_pic_t *pic =
-		(void *)(CONFIG_SYS_MPC8xxx_PIC_ADDR);
+		(void *)(CFG_SYS_MPC8xxx_PIC_ADDR);
 	u32 whoami = in_be32(&pic->whoami);
 
 	/* Enable the timebase register for this core */
@@ -371,15 +313,15 @@ static void corenet_tb_init(void)
 #ifdef CONFIG_SYS_FSL_ERRATUM_A007212
 void fsl_erratum_a007212_workaround(void)
 {
-	ccsr_gur_t __iomem *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t __iomem *gur = (void *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 	u32 ddr_pll_ratio;
 	u32 __iomem *plldgdcr1 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c20);
 	u32 __iomem *plldadcr1 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c28);
 	u32 __iomem *dpdovrcr4 = (void *)(CONFIG_SYS_DCSRBAR + 0x21e80);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 2)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 2)
 	u32 __iomem *plldgdcr2 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c40);
 	u32 __iomem *plldadcr2 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c48);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 3)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 3)
 	u32 __iomem *plldgdcr3 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c60);
 	u32 __iomem *plldadcr3 = (void *)(CONFIG_SYS_DCSRBAR + 0x21c68);
 #endif
@@ -407,25 +349,25 @@ void fsl_erratum_a007212_workaround(void)
 	ddr_pll_ratio >>= 1;
 
 	setbits_be32(plldadcr1, 0x02000001);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 2)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 2)
 	setbits_be32(plldadcr2, 0x02000001);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 3)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 3)
 	setbits_be32(plldadcr3, 0x02000001);
 #endif
 #endif
 	setbits_be32(dpdovrcr4, 0xe0000000);
 	out_be32(plldgdcr1, 0x08000001 | (ddr_pll_ratio << 1));
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 2)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 2)
 	out_be32(plldgdcr2, 0x08000001 | (ddr_pll_ratio << 1));
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 3)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 3)
 	out_be32(plldgdcr3, 0x08000001 | (ddr_pll_ratio << 1));
 #endif
 #endif
 	udelay(100);
 	clrbits_be32(plldadcr1, 0x02000001);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 2)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 2)
 	clrbits_be32(plldadcr2, 0x02000001);
-#if (CONFIG_NUM_DDR_CONTROLLERS >= 3)
+#if (CONFIG_SYS_NUM_DDR_CTLRS >= 3)
 	clrbits_be32(plldadcr3, 0x02000001);
 #endif
 #endif
@@ -437,13 +379,13 @@ ulong cpu_init_f(void)
 {
 	extern void m8560_cpm_reset (void);
 #ifdef CONFIG_SYS_DCSRBAR_PHYS
-	ccsr_gur_t *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t *gur = (void *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 #endif
-#if defined(CONFIG_SECURE_BOOT)
+#if defined(CONFIG_NXP_ESBC) && !defined(CONFIG_SYS_RAMBOOT)
 	struct law_entry law;
 #endif
-#ifdef CONFIG_MPC8548
-	ccsr_local_ecm_t *ecm = (void *)(CONFIG_SYS_MPC85xx_ECM_ADDR);
+#ifdef CONFIG_ARCH_MPC8548
+	ccsr_local_ecm_t *ecm = (void *)(CFG_SYS_MPC85xx_ECM_ADDR);
 	uint svr = get_svr();
 
 	/*
@@ -459,7 +401,7 @@ ulong cpu_init_f(void)
 	disable_tlb(14);
 	disable_tlb(15);
 
-#if defined(CONFIG_SECURE_BOOT)
+#if defined(CONFIG_NXP_ESBC) && !defined(CONFIG_SYS_RAMBOOT)
 	/* Disable the LAW created for NOR flash by the PBI commands */
 	law = find_law(CONFIG_SYS_PBI_FLASH_BASE);
 	if (law.index != -1)
@@ -470,15 +412,7 @@ ulong cpu_init_f(void)
 #endif
 #endif
 
-#ifdef CONFIG_CPM2
-	config_8560_ioports((ccsr_cpm_t *)CONFIG_SYS_MPC85xx_CPM_ADDR);
-#endif
-
        init_early_memctl_regs();
-
-#if defined(CONFIG_CPM2)
-	m8560_cpm_reset();
-#endif
 
 #if defined(CONFIG_QE) && !defined(CONFIG_U_QE)
 	/* Config QE ioports */
@@ -512,7 +446,7 @@ ulong cpu_init_f(void)
 /* Implement a dummy function for those platforms w/o SERDES */
 static void __fsl_serdes__init(void)
 {
-	return ;
+	return;
 }
 __attribute__((weak, alias("__fsl_serdes__init"))) void fsl_serdes_init(void);
 
@@ -521,7 +455,7 @@ int enable_cluster_l2(void)
 {
 	int i = 0;
 	u32 cluster, svr = get_svr();
-	ccsr_gur_t *gur = (void __iomem *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t *gur = (void __iomem *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 	struct ccsr_cluster_l2 __iomem *l2cache;
 
 	/* only the L2 of first cluster should be enabled as expected on T4080,
@@ -542,7 +476,7 @@ int enable_cluster_l2(void)
 	do {
 		int j, cluster_valid = 0;
 
-		l2cache = (void __iomem *)(CONFIG_SYS_FSL_CLUSTER_1_L2 + i * 0x40000);
+		l2cache = (void __iomem *)(CFG_SYS_FSL_CLUSTER_1_L2 + i * 0x40000);
 
 		cluster = in_be32(&gur->tp_cluster[i].lower);
 
@@ -582,9 +516,9 @@ int l2cache_init(void)
 {
 	__maybe_unused u32 svr = get_svr();
 #ifdef CONFIG_L2_CACHE
-	ccsr_l2cache_t *l2cache = (void __iomem *)CONFIG_SYS_MPC85xx_L2_ADDR;
+	ccsr_l2cache_t *l2cache = (void __iomem *)CFG_SYS_MPC85xx_L2_ADDR;
 #elif defined(CONFIG_SYS_FSL_QORIQ_CHASSIS2) && defined(CONFIG_E6500)
-	struct ccsr_cluster_l2 * l2cache = (void __iomem *)CONFIG_SYS_FSL_CLUSTER_1_L2;
+	struct ccsr_cluster_l2 * l2cache = (void __iomem *)CFG_SYS_FSL_CLUSTER_1_L2;
 #endif
 
 	puts ("L2:    ");
@@ -730,7 +664,7 @@ int cpu_init_r(void)
 	const char *spin;
 #endif
 #ifdef CONFIG_SYS_FSL_ERRATUM_SEC_A003571
-	ccsr_sec_t __iomem *sec = (void *)CONFIG_SYS_FSL_SEC_ADDR;
+	ccsr_sec_t __iomem *sec = (void *)CFG_SYS_FSL_SEC_ADDR;
 #endif
 #if defined(CONFIG_SYS_P4080_ERRATUM_CPU22) || \
 	defined(CONFIG_SYS_FSL_ERRATUM_NMG_CPU_A011)
@@ -752,7 +686,7 @@ int cpu_init_r(void)
 	char *buf = NULL;
 	int n, res;
 
-	n = getenv_f("hwconfig", buffer, sizeof(buffer));
+	n = env_get_f("hwconfig", buffer, sizeof(buffer));
 	if (n > 0)
 		buf = buffer;
 
@@ -775,6 +709,13 @@ int cpu_init_r(void)
 		sync();
 	}
 #endif
+
+#ifdef CONFIG_SYS_FSL_ERRATUM_A007907
+	flush_dcache();
+	mtspr(L1CSR2, (mfspr(L1CSR2) & ~L1CSR2_DCSTASHID));
+	sync();
+#endif
+
 #ifdef CONFIG_SYS_FSL_ERRATUM_A005812
 	/*
 	 * A-005812 workaround sets bit 32 of SPR 976 for SoCs running
@@ -785,7 +726,7 @@ int cpu_init_r(void)
 #endif
 
 #if defined(CONFIG_PPC_SPINTABLE_COMPATIBLE) && defined(CONFIG_MP)
-	spin = getenv("spin_table_compat");
+	spin = env_get("spin_table_compat");
 	if (spin && (*spin == 'n'))
 		spin_table_compat = 0;
 	else
@@ -795,7 +736,7 @@ int cpu_init_r(void)
 #ifdef CONFIG_FSL_CORENET
 	set_liodns();
 #ifdef CONFIG_SYS_DPAA_QBMAN
-	setup_portals();
+	setup_qbman_portals();
 #endif
 #endif
 
@@ -836,7 +777,7 @@ int cpu_init_r(void)
 #ifdef CONFIG_SYS_SRIO
 	srio_init();
 #ifdef CONFIG_SRIO_PCIE_BOOT_MASTER
-	char *s = getenv("bootmaster");
+	char *s = env_get("bootmaster");
 	if (s) {
 		if (!strcmp(s, "SRIO1")) {
 			srio_boot_master(1);
@@ -880,7 +821,7 @@ int cpu_init_r(void)
 #ifdef CONFIG_SYS_FSL_USB1_PHY_ENABLE
 	{
 		struct ccsr_usb_phy __iomem *usb_phy1 =
-			(void *)CONFIG_SYS_MPC85xx_USB1_PHY_ADDR;
+			(void *)CFG_SYS_MPC85xx_USB1_PHY_ADDR;
 #ifdef CONFIG_SYS_FSL_ERRATUM_A006261
 		if (has_erratum_a006261())
 			fsl_erratum_a006261_workaround(usb_phy1);
@@ -892,7 +833,7 @@ int cpu_init_r(void)
 #ifdef CONFIG_SYS_FSL_USB2_PHY_ENABLE
 	{
 		struct ccsr_usb_phy __iomem *usb_phy2 =
-			(void *)CONFIG_SYS_MPC85xx_USB2_PHY_ADDR;
+			(void *)CFG_SYS_MPC85xx_USB2_PHY_ADDR;
 #ifdef CONFIG_SYS_FSL_ERRATUM_A006261
 		if (has_erratum_a006261())
 			fsl_erratum_a006261_workaround(usb_phy2);
@@ -918,7 +859,7 @@ int cpu_init_r(void)
 
 #if defined(CONFIG_SYS_FSL_USB_DUAL_PHY_ENABLE)
 		struct ccsr_usb_phy __iomem *usb_phy =
-			(void *)CONFIG_SYS_MPC85xx_USB1_PHY_ADDR;
+			(void *)CFG_SYS_MPC85xx_USB1_PHY_ADDR;
 		setbits_be32(&usb_phy->pllprg[1],
 			     CONFIG_SYS_FSL_USB_PLLPRG2_PHY2_CLK_EN |
 			     CONFIG_SYS_FSL_USB_PLLPRG2_PHY1_CLK_EN |
@@ -947,19 +888,23 @@ int cpu_init_r(void)
 
 #endif /* CONFIG_SYS_FSL_USB_DUAL_PHY_ENABLE */
 
-#ifdef CONFIG_FMAN_ENET
-	fman_enet_init();
+#ifdef CONFIG_SYS_FSL_ERRATUM_A009942
+	erratum_a009942_check_cpo();
 #endif
 
-#if defined(CONFIG_SECURE_BOOT) && defined(CONFIG_FSL_CORENET)
+#ifdef CONFIG_FMAN_ENET
+#ifndef CONFIG_DM_ETH
+	fman_enet_init();
+#endif
+#endif
+
+#if defined(CONFIG_NXP_ESBC) && defined(CONFIG_FSL_CORENET)
 	if (pamu_init() < 0)
 		fsl_secboot_handle_error(ERROR_ESBC_PAMU_INIT);
 #endif
 
 #ifdef CONFIG_FSL_CAAM
-	sec_init();
-
-#if defined(CONFIG_PPC_C29X)
+#if defined(CONFIG_ARCH_C29X)
 	if ((SVR_SOC_VER(svr) == SVR_C292) ||
 	    (SVR_SOC_VER(svr) == SVR_C293))
 		sec_init_idx(1);
@@ -969,7 +914,7 @@ int cpu_init_r(void)
 #endif
 #endif
 
-#if defined(CONFIG_FSL_SATA_V2) && defined(CONFIG_FSL_SATA_ERRATUM_A001)
+#if defined(CONFIG_FSL_SATA_V2) && defined(CONFIG_SYS_FSL_ERRATUM_SATA_A001)
 	/*
 	 * For P1022/1013 Rev1.0 silicon, after power on SATA host
 	 * controller is configured in legacy mode instead of the
@@ -983,11 +928,11 @@ int cpu_init_r(void)
 		fsl_sata_reg_t *reg;
 
 		/* first SATA controller */
-		reg = (void *)CONFIG_SYS_MPC85xx_SATA1_ADDR;
+		reg = (void *)CFG_SYS_MPC85xx_SATA1_ADDR;
 		clrbits_le32(&reg->hcontrol, HCONTROL_ENTERPRISE_EN);
 
 		/* second SATA controller */
-		reg = (void *)CONFIG_SYS_MPC85xx_SATA2_ADDR;
+		reg = (void *)CFG_SYS_MPC85xx_SATA2_ADDR;
 		clrbits_le32(&reg->hcontrol, HCONTROL_ENTERPRISE_EN);
 	}
 #endif
@@ -996,6 +941,22 @@ int cpu_init_r(void)
 
 	return 0;
 }
+
+#ifdef CONFIG_ARCH_MISC_INIT
+int arch_misc_init(void)
+{
+	if (IS_ENABLED(CONFIG_FSL_CAAM)) {
+		struct udevice *dev;
+		int ret;
+
+		ret = uclass_get_device_by_driver(UCLASS_MISC, DM_DRIVER_GET(caam_jr), &dev);
+		if (ret)
+			printf("Failed to initialize caam_jr: %d\n", ret);
+	}
+
+	return 0;
+}
+#endif
 
 void arch_preboot_os(void)
 {
@@ -1011,28 +972,20 @@ void arch_preboot_os(void)
 	mtmsr(msr);
 }
 
-#if defined(CONFIG_CMD_SATA) && defined(CONFIG_FSL_SATA)
-int sata_initialize(void)
+int cpu_secondary_init_r(void)
 {
-	if (is_serdes_configured(SATA1) || is_serdes_configured(SATA2))
-		return __sata_initialize();
-
-	return 1;
-}
-#endif
-
-void cpu_secondary_init_r(void)
-{
+#ifdef CONFIG_QE
 #ifdef CONFIG_U_QE
 	uint qe_base = CONFIG_SYS_IMMR + 0x00140000; /* QE immr base */
-#elif defined CONFIG_QE
+#else
 	uint qe_base = CONFIG_SYS_IMMR + 0x00080000; /* QE immr base */
 #endif
 
-#ifdef CONFIG_QE
 	qe_init(qe_base);
 	qe_reset();
 #endif
+
+	return 0;
 }
 
 #ifdef CONFIG_BOARD_LATE_INIT

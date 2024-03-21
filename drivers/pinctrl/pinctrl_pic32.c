@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Pinctrl driver for Microchip PIC32 SoCs
  * Copyright (c) 2015 Microchip Technology Inc.
  * Written by Purna Chandra Mandal <purna.mandal@microchip.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <log.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <dm/pinctrl.h>
-#include <dm/root.h>
+#include <linux/bitops.h>
 #include <mach/pic32.h>
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -222,6 +223,31 @@ static void pic32_eth_pin_config(struct udevice *dev)
 	pic32_pinconfig_set(priv, configs, ARRAY_SIZE(configs));
 }
 
+static void pic32_sdhci_pin_config(struct udevice *dev)
+{
+	struct pic32_pinctrl_priv *priv = dev_get_priv(dev);
+	const struct pic32_pin_config configs[] = {
+		/* SDWP - H2 */
+		PIN_CONFIG(PIC32_PORT_H, 2, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDCD - A0 */
+		PIN_CONFIG(PIC32_PORT_A, 0, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDCMD - D4 */
+		PIN_CONFIG(PIC32_PORT_D, 4, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDCK - A6 */
+		PIN_CONFIG(PIC32_PORT_A, 6, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDDATA0 - G13 */
+		PIN_CONFIG(PIC32_PORT_G, 13, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDDATA1 - G12 */
+		PIN_CONFIG(PIC32_PORT_G, 12, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDDATA2 - G14 */
+		PIN_CONFIG(PIC32_PORT_G, 14, PIN_CONFIG_PIC32_DIGITAL),
+		/* SDDATA3 - A7 */
+		PIN_CONFIG(PIC32_PORT_A, 7, PIN_CONFIG_PIC32_DIGITAL),
+	};
+
+	pic32_pinconfig_set(priv, configs, ARRAY_SIZE(configs));
+}
+
 static int pic32_pinctrl_request(struct udevice *dev, int func, int flags)
 {
 	struct pic32_pinctrl_priv *priv = dev_get_priv(dev);
@@ -240,6 +266,9 @@ static int pic32_pinctrl_request(struct udevice *dev, int func, int flags)
 	case PERIPH_ID_ETH:
 		pic32_eth_pin_config(dev);
 		break;
+	case PERIPH_ID_SDHCI:
+		pic32_sdhci_pin_config(dev);
+		break;
 	default:
 		debug("%s: unknown-unhandled case\n", __func__);
 		break;
@@ -254,7 +283,7 @@ static int pic32_pinctrl_get_periph_id(struct udevice *dev,
 	int ret;
 	u32 cell[2];
 
-	ret = fdtdec_get_int_array(gd->fdt_blob, periph->of_offset,
+	ret = fdtdec_get_int_array(gd->fdt_blob, dev_of_offset(periph),
 				   "interrupts", cell, ARRAY_SIZE(cell));
 	if (ret < 0)
 		return -EINVAL;
@@ -311,7 +340,7 @@ static int pic32_pinctrl_probe(struct udevice *dev)
 	struct pic32_pinctrl_priv *priv = dev_get_priv(dev);
 	struct fdt_resource res;
 	void *fdt = (void *)gd->fdt_blob;
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 	int ret;
 
 	ret = fdt_get_named_resource(fdt, node, "reg", "reg-names",
@@ -341,12 +370,6 @@ static int pic32_pinctrl_probe(struct udevice *dev)
 	return 0;
 }
 
-static int pic32_pinctrl_bind(struct udevice *dev)
-{
-	/* scan child GPIO banks */
-	return dm_scan_fdt_node(dev, gd->fdt_blob, dev->of_offset, false);
-}
-
 static const struct udevice_id pic32_pinctrl_ids[] = {
 	{ .compatible = "microchip,pic32mzda-pinctrl" },
 	{ }
@@ -358,6 +381,6 @@ U_BOOT_DRIVER(pinctrl_pic32) = {
 	.of_match	= pic32_pinctrl_ids,
 	.ops		= &pic32_pinctrl_ops,
 	.probe		= pic32_pinctrl_probe,
-	.bind		= pic32_pinctrl_bind,
-	.priv_auto_alloc_size = sizeof(struct pic32_pinctrl_priv),
+	.bind		= dm_scan_fdt_dev,
+	.priv_auto	= sizeof(struct pic32_pinctrl_priv),
 };

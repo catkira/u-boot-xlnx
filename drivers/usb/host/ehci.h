@@ -1,19 +1,19 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*-
  * Copyright (c) 2007-2008, Juniper Networks, Inc.
  * Copyright (c) 2008, Michael Trimarchi <trimarchimichael@yahoo.it>
  * All rights reserved.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #ifndef USB_EHCI_H
 #define USB_EHCI_H
 
+#include <stdbool.h>
 #include <usb.h>
+#include <generic-phy.h>
 
-#if !defined(CONFIG_SYS_USB_EHCI_MAX_ROOT_PORTS)
-#define CONFIG_SYS_USB_EHCI_MAX_ROOT_PORTS	2
-#endif
+/* Section 2.2.3 - N_PORTS */
+#define MAX_HC_PORTS		15
 
 /*
  * Register Space.
@@ -44,6 +44,7 @@ struct ehci_hcor {
 #define STS_ASS		(1 << 15)
 #define	STS_PSS		(1 << 14)
 #define STS_HALT	(1 << 12)
+#define STS_IAA		(1 << 5)
 	uint32_t or_usbintr;
 #define INTR_UE         (1 << 0)                /* USB interrupt enable */
 #define INTR_UEE        (1 << 1)                /* USB error interrupt enable */
@@ -62,11 +63,13 @@ struct ehci_hcor {
 	uint32_t _reserved_1_[6];
 	uint32_t or_configflag;
 #define FLAG_CF		(1 << 0)	/* true:  we'll support "high speed" */
-	uint32_t or_portsc[CONFIG_SYS_USB_EHCI_MAX_ROOT_PORTS];
+	uint32_t or_portsc[MAX_HC_PORTS];
 #define PORTSC_PSPD(x)		(((x) >> 26) & 0x3)
 #define PORTSC_PSPD_FS			0x0
 #define PORTSC_PSPD_LS			0x1
 #define PORTSC_PSPD_HS			0x2
+#define PORTSC_FSL_PFSC		BIT(24) /* PFSC bit to disable HS chirping */
+
 	uint32_t or_systune;
 } __attribute__ ((packed, aligned(4)));
 
@@ -102,13 +105,11 @@ struct usb_linux_config_descriptor {
 } __attribute__ ((packed));
 
 #if defined CONFIG_EHCI_DESC_BIG_ENDIAN
-#define ehci_readl(x)		cpu_to_be32((*((volatile u32 *)(x))))
-#define ehci_writel(a, b)	(*((volatile u32 *)(a)) = \
-					cpu_to_be32(((volatile u32)b)))
+#define ehci_readl(x)		be32_to_cpu(__raw_readl(x))
+#define ehci_writel(a, b)	__raw_writel(cpu_to_be32(b), a)
 #else
-#define ehci_readl(x)		cpu_to_le32((*((volatile u32 *)(x))))
-#define ehci_writel(a, b)	(*((volatile u32 *)(a)) = \
-					cpu_to_le32(((volatile u32)b)))
+#define ehci_readl(x)		readl(x)
+#define ehci_writel(a, b)	writel(b, a)
 #endif
 
 #if defined CONFIG_EHCI_MMIO_BIG_ENDIAN
@@ -254,6 +255,8 @@ struct ehci_ctrl {
 	uint32_t *periodic_list;
 	int periodic_schedules;
 	int ntds;
+	bool has_fsl_erratum_a005275;	/* Freescale HS silicon quirk */
+	bool async_locked;
 	struct ehci_ops ops;
 	void *priv;	/* client's private data */
 };
@@ -277,7 +280,7 @@ void ehci_set_controller_priv(int index, void *priv,
  * ehci_get_controller_priv() - Get controller private data
  *
  * @index	Controller number to get
- * @return controller pointer for this index
+ * Return: controller pointer for this index
  */
 void *ehci_get_controller_priv(int index);
 
@@ -292,4 +295,5 @@ int ehci_register(struct udevice *dev, struct ehci_hccr *hccr,
 int ehci_deregister(struct udevice *dev);
 extern struct dm_usb_ops ehci_usb_ops;
 
+#include <linux/bitops.h>
 #endif /* USB_EHCI_H */

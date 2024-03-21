@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Board functions for Siemens CORVUS (AT91SAM9G45) based board
  * (C) Copyright 2013 Siemens AG
@@ -7,12 +8,13 @@
  * (C) Copyright 2007-2008
  * Stelian Pop <stelian@popies.net>
  * Lead Tech Design <www.leadtechdesign.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <dm.h>
+#include <init.h>
+#include <log.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
 #include <asm/arch/at91sam9g45_matrix.h>
 #include <asm/arch/at91sam9_smc.h>
@@ -50,8 +52,28 @@ static void corvus_request_gpio(void)
 	gpio_request(AT91_PIN_PD3, "USB1");
 	gpio_request(AT91_PIN_PB18, "SPICS1");
 	gpio_request(AT91_PIN_PB3, "SPICS0");
-	gpio_request(CONFIG_RED_LED, "red led");
-	gpio_request(CONFIG_GREEN_LED, "green led");
+	gpio_request(AT91_PIN_PD31, "red led"); /* this is the user1 led */
+	gpio_request(AT91_PIN_PD0, "green led"); /* this is the user2 led */
+}
+
+void red_led_on(void)
+{
+	gpio_set_value(AT91_PIN_PD31, 1);
+}
+
+void red_led_off(void)
+{
+	gpio_set_value(AT91_PIN_PD31, 0);
+}
+
+void green_led_on(void)
+{
+	gpio_set_value(AT91_PIN_PD0, 0);
+}
+
+void green_led_off(void)
+{
+	gpio_set_value(AT91_PIN_PD0, 1);
 }
 
 static void corvus_nand_hw_init(void)
@@ -250,9 +272,6 @@ int board_init(void)
 #ifdef CONFIG_ATMEL_SPI
 	at91_spi0_hw_init(1 << 4);
 #endif
-#ifdef CONFIG_HAS_DATAFLASH
-	at91_spi0_hw_init(1 << 0);
-#endif
 #ifdef CONFIG_MACB
 	corvus_macb_hw_init();
 #endif
@@ -274,7 +293,7 @@ int dram_init(void)
 }
 
 #ifndef CONFIG_DM_ETH
-int board_eth_init(bd_t *bis)
+int board_eth_init(struct bd_info *bis)
 {
 	int rc = 0;
 #ifdef CONFIG_MACB
@@ -316,11 +335,11 @@ void spi_cs_deactivate(struct spi_slave *slave)
 	}
 }
 
-static struct atmel_serial_platdata at91sam9260_serial_plat = {
+static struct atmel_serial_plat at91sam9260_serial_plat = {
 	.base_addr = ATMEL_BASE_DBGU,
 };
 
-U_BOOT_DEVICE(at91sam9260_serial) = {
+U_BOOT_DRVINFO(at91sam9260_serial) = {
 	.name	= "serial_atmel",
-	.platdata = &at91sam9260_serial_plat,
+	.plat = &at91sam9260_serial_plat,
 };

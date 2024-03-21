@@ -1,20 +1,25 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2007-2011 Freescale Semiconductor, Inc.
  *
  * (C) Copyright 2000
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
-#include <libfdt.h>
+#include <clock_legacy.h>
+#include <env.h>
+#include <log.h>
+#include <time.h>
+#include <asm/global_data.h>
+#include <linux/libfdt.h>
 #include <fdt_support.h>
 #include <asm/processor.h>
 #include <linux/ctype.h>
 #include <asm/io.h>
 #include <asm/fsl_fdt.h>
 #include <asm/fsl_portals.h>
+#include <fsl_qbman.h>
 #include <hwconfig.h>
 #ifdef CONFIG_FSL_ESDHC
 #include <fsl_esdhc.h>
@@ -92,7 +97,7 @@ void ft_fixup_cpu(void *blob, u64 memory_limit)
 	 * Extract hwconfig from environment.
 	 * Search for tdm entry in hwconfig.
 	 */
-	ret = getenv_f("hwconfig", buffer, sizeof(buffer));
+	ret = env_get_f("hwconfig", buffer, sizeof(buffer));
 	if (ret > 0)
 		tdm_hwconfig_enabled = hwconfig_f("tdm", buffer);
 
@@ -159,7 +164,7 @@ void ft_fixup_cpu(void *blob, u64 memory_limit)
 static inline void ft_fixup_l3cache(void *blob, int off)
 {
 	u32 line_size, num_ways, size, num_sets;
-	cpc_corenet_t *cpc = (void *)CONFIG_SYS_FSL_CPC_ADDR;
+	cpc_corenet_t *cpc = (void *)CFG_SYS_FSL_CPC_ADDR;
 	u32 cfg0 = in_be32(&cpc->cpccfg0);
 
 	size = CPC_CFG0_SZ_K(cfg0) * 1024 * CONFIG_SYS_NUM_CPC;
@@ -180,11 +185,44 @@ static inline void ft_fixup_l3cache(void *blob, int off)
 #define ft_fixup_l3cache(x, y)
 #endif
 
+#if defined(CONFIG_L2_CACHE) || \
+	defined(CONFIG_BACKSIDE_L2_CACHE) || \
+	defined(CONFIG_SYS_FSL_QORIQ_CHASSIS2)
+static inline void ft_fixup_l2cache_compatible(void *blob, int off)
+{
+	int len;
+	struct cpu_type *cpu = identify_cpu(SVR_SOC_VER(get_svr()));
+
+	if (cpu) {
+		char buf[40];
+
+		if (isdigit(cpu->name[0])) {
+			/* MPCxxxx, where xxxx == 4-digit number */
+			len = sprintf(buf, "fsl,mpc%s-l2-cache-controller",
+				cpu->name) + 1;
+		} else {
+			/* Pxxxx or Txxxx, where xxxx == 4-digit number */
+			len = sprintf(buf, "fsl,%c%s-l2-cache-controller",
+			tolower(cpu->name[0]), cpu->name + 1) + 1;
+		}
+
+		/*
+		 * append "cache" after the NULL character that the previous
+		 * sprintf wrote.  This is how a device tree stores multiple
+		 * strings in a property.
+		 */
+		len += sprintf(buf + len, "cache") + 1;
+
+		fdt_setprop(blob, off, "compatible", buf, len);
+	}
+}
+#endif
+
 #if defined(CONFIG_L2_CACHE)
 /* return size in kilobytes */
 static inline u32 l2cache_size(void)
 {
-	volatile ccsr_l2cache_t *l2cache = (void *)CONFIG_SYS_MPC85xx_L2_ADDR;
+	volatile ccsr_l2cache_t *l2cache = (void *)CFG_SYS_MPC85xx_L2_ADDR;
 	volatile u32 l2siz_field = (l2cache->l2ctl >> 28) & 0x3;
 	u32 ver = SVR_SOC_VER(get_svr());
 
@@ -215,9 +253,8 @@ static inline u32 l2cache_size(void)
 
 static inline void ft_fixup_l2cache(void *blob)
 {
-	int len, off;
+	int off;
 	u32 *ph;
-	struct cpu_type *cpu = identify_cpu(SVR_SOC_VER(get_svr()));
 
 	const u32 line_size = 32;
 	const u32 num_ways = 8;
@@ -234,37 +271,16 @@ static inline void ft_fixup_l2cache(void *blob)
 
 	if (ph == NULL) {
 		debug("no next-level-cache property\n");
-		return ;
+		return;
 	}
 
 	off = fdt_node_offset_by_phandle(blob, *ph);
 	if (off < 0) {
 		printf("%s: %s\n", __func__, fdt_strerror(off));
-		return ;
+		return;
 	}
 
-	if (cpu) {
-		char buf[40];
-
-		if (isdigit(cpu->name[0])) {
-			/* MPCxxxx, where xxxx == 4-digit number */
-			len = sprintf(buf, "fsl,mpc%s-l2-cache-controller",
-				cpu->name) + 1;
-		} else {
-			/* Pxxxx or Txxxx, where xxxx == 4-digit number */
-			len = sprintf(buf, "fsl,%c%s-l2-cache-controller",
-				tolower(cpu->name[0]), cpu->name + 1) + 1;
-		}
-
-		/*
-		 * append "cache" after the NULL character that the previous
-		 * sprintf wrote.  This is how a device tree stores multiple
-		 * strings in a property.
-		 */
-		len += sprintf(buf + len, "cache") + 1;
-
-		fdt_setprop(blob, off, "compatible", buf, len);
-	}
+	ft_fixup_l2cache_compatible(blob, off);
 	fdt_setprop(blob, off, "cache-unified", NULL, 0);
 	fdt_setprop_cell(blob, off, "cache-block-size", line_size);
 	fdt_setprop_cell(blob, off, "cache-size", size);
@@ -283,7 +299,7 @@ static inline void ft_fixup_l2cache(void *blob)
 	u32 l2cfg0 = mfspr(SPRN_L2CFG0);
 #else
 	struct ccsr_cluster_l2 *l2cache =
-		(struct ccsr_cluster_l2 __iomem *)(CONFIG_SYS_FSL_CLUSTER_1_L2);
+		(struct ccsr_cluster_l2 __iomem *)(CFG_SYS_FSL_CLUSTER_1_L2);
 	u32 l2cfg0 = in_be32(&l2cache->l2cfg0);
 #endif
 	u32 size, line_size, num_ways, num_sets;
@@ -337,7 +353,7 @@ static inline void ft_fixup_l2cache(void *blob)
 			fdt_setprop_cell(blob, l2_off, "cache-size", size);
 			fdt_setprop_cell(blob, l2_off, "cache-sets", num_sets);
 			fdt_setprop_cell(blob, l2_off, "cache-level", 2);
-			fdt_setprop(blob, l2_off, "compatible", "cache", 6);
+			ft_fixup_l2cache_compatible(blob, l2_off);
 		}
 
 		if (l3_off < 0) {
@@ -357,7 +373,7 @@ next:
 		l3_off = fdt_node_offset_by_phandle(blob, l3_off);
 		if (l3_off < 0) {
 			printf("%s: %s\n", __func__, fdt_strerror(off));
-			return ;
+			return;
 		}
 		ft_fixup_l3cache(blob, l3_off);
 	}
@@ -450,11 +466,11 @@ static void ft_fixup_dpaa_clks(void *blob)
 
 	get_sys_info(&sysinfo);
 #ifdef CONFIG_SYS_DPAA_FMAN
-	ft_fixup_clks(blob, "fsl,fman", CONFIG_SYS_FSL_FM1_OFFSET,
+	ft_fixup_clks(blob, "fsl,fman", CFG_SYS_FSL_FM1_OFFSET,
 			sysinfo.freq_fman[0]);
 
 #if (CONFIG_SYS_NUM_FMAN == 2)
-	ft_fixup_clks(blob, "fsl,fman", CONFIG_SYS_FSL_FM2_OFFSET,
+	ft_fixup_clks(blob, "fsl,fman", CFG_SYS_FSL_FM2_OFFSET,
 			sysinfo.freq_fman[1]);
 #endif
 #endif
@@ -490,10 +506,10 @@ static void ft_fixup_qe_snum(void *blob)
 }
 #endif
 
-#if defined(CONFIG_PPC_P4080)
+#if defined(CONFIG_ARCH_P4080)
 static void fdt_fixup_usb(void *fdt)
 {
-	ccsr_gur_t *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t *gur = (void *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 	u32 rcwsr11 = in_be32(&gur->rcwsr[11]);
 	int off;
 
@@ -511,16 +527,15 @@ static void fdt_fixup_usb(void *fdt)
 #define fdt_fixup_usb(x)
 #endif
 
-#if defined(CONFIG_PPC_T2080) || defined(CONFIG_PPC_T4240) || \
-	defined(CONFIG_PPC_T4160) || defined(CONFIG_PPC_T4080)
+#if defined(CONFIG_ARCH_T2080) || defined(CONFIG_ARCH_T4240)
 void fdt_fixup_dma3(void *blob)
 {
 	/* the 3rd DMA is not functional if SRIO2 is chosen */
 	int nodeoff;
-	ccsr_gur_t __iomem *gur = (void *)(CONFIG_SYS_MPC85xx_GUTS_ADDR);
+	ccsr_gur_t __iomem *gur = (void *)(CFG_SYS_MPC85xx_GUTS_ADDR);
 
 #define CONFIG_SYS_ELO3_DMA3 (0xffe000000 + 0x102300)
-#if defined(CONFIG_PPC_T2080)
+#if defined(CONFIG_ARCH_T2080)
 	u32 srds_prtcl_s2 = in_be32(&gur->rcwsr[4]) &
 				    FSL_CORENET2_RCWSR4_SRDS2_PRTCL;
 	srds_prtcl_s2 >>= FSL_CORENET2_RCWSR4_SRDS2_PRTCL_SHIFT;
@@ -529,8 +544,7 @@ void fdt_fixup_dma3(void *blob)
 	case 0x29:
 	case 0x2d:
 	case 0x2e:
-#elif defined(CONFIG_PPC_T4240) || defined(CONFIG_PPC_T4160) || \
-	defined(CONFIG_PPC_T4080)
+#elif defined(CONFIG_ARCH_T4240)
 	u32 srds_prtcl_s4 = in_be32(&gur->rcwsr[4]) &
 				    FSL_CORENET2_RCWSR4_SRDS4_PRTCL;
 	srds_prtcl_s4 >>= FSL_CORENET2_RCWSR4_SRDS4_PRTCL_SHIFT;
@@ -556,7 +570,7 @@ void fdt_fixup_dma3(void *blob)
 #define fdt_fixup_dma3(x)
 #endif
 
-#if defined(CONFIG_PPC_T1040)
+#if defined(CONFIG_ARCH_T1040)
 static void fdt_fixup_l2_switch(void *blob)
 {
 	uchar l2swaddr[6];
@@ -570,7 +584,7 @@ static void fdt_fixup_l2_switch(void *blob)
 		return;
 
 	/* Get MAC address for the l2switch from "l2switchaddr"*/
-	if (!eth_getenv_enetaddr("l2switchaddr", l2swaddr)) {
+	if (!eth_env_get_enetaddr("l2switchaddr", l2swaddr)) {
 		printf("Warning: MAC address for l2switch not found\n");
 		memset(l2swaddr, 0, sizeof(l2swaddr));
 	}
@@ -583,7 +597,7 @@ static void fdt_fixup_l2_switch(void *blob)
 #define fdt_fixup_l2_switch(x)
 #endif
 
-void ft_cpu_setup(void *blob, bd_t *bd)
+void ft_cpu_setup(void *blob, struct bd_info *bd)
 {
 	int off;
 	int val;
@@ -597,12 +611,10 @@ void ft_cpu_setup(void *blob, bd_t *bd)
 	else {
 		ccsr_sec_t __iomem *sec;
 
-		sec = (void __iomem *)CONFIG_SYS_FSL_SEC_ADDR;
+		sec = (void __iomem *)CFG_SYS_FSL_SEC_ADDR;
 		fdt_fixup_crypto_node(blob, sec_in32(&sec->secvid_ms));
 	}
 #endif
-
-	fdt_fixup_ethernet(blob);
 
 	fdt_add_enet_stashing(blob);
 
@@ -626,10 +638,6 @@ void ft_cpu_setup(void *blob, bd_t *bd)
 	do_fixup_by_prop_u32(blob, "device_type", "soc", 4,
 		"bus-frequency", bd->bi_busfreq, 1);
 
-	do_fixup_by_compat_u32(blob, "fsl,pq3-localbus",
-		"bus-frequency", gd->arch.lbc_clk, 1);
-	do_fixup_by_compat_u32(blob, "fsl,elbc",
-		"bus-frequency", gd->arch.lbc_clk, 1);
 #ifdef CONFIG_QE
 	ft_qe_setup(blob);
 	ft_fixup_qe_snum(blob);
@@ -644,19 +652,11 @@ void ft_cpu_setup(void *blob, bd_t *bd)
 		"clock-frequency", CONFIG_SYS_NS16550_CLK, 1);
 #endif
 
-#ifdef CONFIG_CPM2
-	do_fixup_by_compat_u32(blob, "fsl,cpm2-scc-uart",
-		"current-speed", gd->baudrate, 1);
-
-	do_fixup_by_compat_u32(blob, "fsl,cpm2-brg",
-		"clock-frequency", bd->bi_brgfreq, 1);
-#endif
-
 #ifdef CONFIG_FSL_CORENET
 	do_fixup_by_compat_u32(blob, "fsl,qoriq-clockgen-1.0",
-		"clock-frequency", CONFIG_SYS_CLK_FREQ, 1);
+		"clock-frequency", get_board_sys_clk(), 1);
 	do_fixup_by_compat_u32(blob, "fsl,qoriq-clockgen-2.0",
-		"clock-frequency", CONFIG_SYS_CLK_FREQ, 1);
+		"clock-frequency", get_board_sys_clk(), 1);
 	do_fixup_by_compat_u32(blob, "fsl,mpic",
 		"clock-frequency", get_bus_freq(0)/2, 1);
 #else
@@ -664,10 +664,10 @@ void ft_cpu_setup(void *blob, bd_t *bd)
 		"clock-frequency", get_bus_freq(0), 1);
 #endif
 
-	fdt_fixup_memory(blob, (u64)bd->bi_memstart, (u64)bd->bi_memsize);
+	fdt_fixup_memory(blob, (u64)gd->ram_base, (u64)gd->ram_size);
 
 #ifdef CONFIG_MP
-	ft_fixup_cpu(blob, (u64)bd->bi_memstart + (u64)bd->bi_memsize);
+	ft_fixup_cpu(blob, (u64)gd->ram_base + (u64)gd->ram_size);
 	ft_fixup_num_cores(blob);
 #endif
 
@@ -766,8 +766,15 @@ int ft_verify_fdt(void *fdt)
 
 	/* First check the CCSR base address */
 	off = fdt_node_offset_by_prop_value(fdt, -1, "device_type", "soc", 4);
-	if (off > 0)
-		addr = fdt_get_base_address(fdt, off);
+	if (off > 0) {
+		int size;
+		u32 naddr;
+		const fdt32_t *prop;
+
+		naddr = fdt_address_cells(fdt, off);
+		prop = fdt_getprop(fdt, off, "ranges", &size);
+		addr = fdt_translate_address(fdt, off, prop + naddr);
+	}
 
 	if (!addr) {
 		printf("Warning: could not determine base CCSR address in "

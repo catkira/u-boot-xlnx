@@ -1,29 +1,39 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright 2009, 2011 Freescale Semiconductor, Inc.
+ * (C) Copyright 2009, 2011, 2016 Freescale Semiconductor, Inc.
  *
  * (C) Copyright 2008, Excito Elektronik i Sk=E5ne AB
  *
  * Author: Tor Krill tor@excito.com
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <env.h>
+#include <log.h>
 #include <pci.h>
 #include <usb.h>
+#include <asm/global_data.h>
 #include <asm/io.h>
+#include <linux/delay.h>
 #include <usb/ehci-ci.h>
 #include <hwconfig.h>
 #include <fsl_usb.h>
 #include <fdt_support.h>
+#include <dm.h>
 
 #include "ehci.h"
 
-#ifndef CONFIG_USB_MAX_CONTROLLER_COUNT
-#define CONFIG_USB_MAX_CONTROLLER_COUNT 1
-#endif
+DECLARE_GLOBAL_DATA_PTR;
+
+struct ehci_fsl_priv {
+	struct ehci_ctrl ehci;
+	fdt_addr_t hcd_base;
+	char *phy_type;
+};
 
 static void set_txfifothresh(struct usb_ehci *, u32);
+static int ehci_fsl_init(struct ehci_fsl_priv *priv, struct usb_ehci *ehci,
+		  struct ehci_hccr *hccr, struct ehci_hcor *hcor);
 
 /* Check USB PHY clock valid */
 static int usb_phy_clk_valid(struct usb_ehci *ehci)
@@ -37,19 +47,102 @@ static int usb_phy_clk_valid(struct usb_ehci *ehci)
 	}
 }
 
-/*
- * Create the appropriate control structures to manage
- * a new EHCI host controller.
- *
- * Excerpts from linux ehci fsl driver.
- */
-int ehci_hcd_init(int index, enum usb_init_type init,
-		struct ehci_hccr **hccr, struct ehci_hcor **hcor)
+static int ehci_fsl_of_to_plat(struct udevice *dev)
+{
+	struct ehci_fsl_priv *priv = dev_get_priv(dev);
+	const void *prop;
+
+	prop = fdt_getprop(gd->fdt_blob, dev_of_offset(dev), "phy_type",
+			   NULL);
+	if (prop) {
+		priv->phy_type = (char *)prop;
+		debug("phy_type %s\n", priv->phy_type);
+	}
+
+	return 0;
+}
+
+static int ehci_fsl_init_after_reset(struct ehci_ctrl *ctrl)
 {
 	struct usb_ehci *ehci = NULL;
+	struct ehci_fsl_priv *priv = container_of(ctrl, struct ehci_fsl_priv,
+						   ehci);
+#ifdef CONFIG_PPC
+	ehci = (struct usb_ehci *)lower_32_bits(priv->hcd_base);
+#else
+	ehci = (struct usb_ehci *)priv->hcd_base;
+#endif
+
+	if (ehci_fsl_init(priv, ehci, priv->ehci.hccr, priv->ehci.hcor) < 0)
+		return -ENXIO;
+
+	return 0;
+}
+
+static const struct ehci_ops fsl_ehci_ops = {
+	.init_after_reset = ehci_fsl_init_after_reset,
+};
+
+static int ehci_fsl_probe(struct udevice *dev)
+{
+	struct ehci_fsl_priv *priv = dev_get_priv(dev);
+	struct usb_ehci *ehci = NULL;
+	struct ehci_hccr *hccr;
+	struct ehci_hcor *hcor;
+	struct ehci_ctrl *ehci_ctrl = &priv->ehci;
+
+	/*
+	 * Get the base address for EHCI controller from the device node
+	 */
+	priv->hcd_base = dev_read_addr(dev);
+	if (priv->hcd_base == FDT_ADDR_T_NONE) {
+		debug("Can't get the EHCI register base address\n");
+		return -ENXIO;
+	}
+#ifdef CONFIG_PPC
+	ehci = (struct usb_ehci *)lower_32_bits(priv->hcd_base);
+#else
+	ehci = (struct usb_ehci *)priv->hcd_base;
+#endif
+	hccr = (struct ehci_hccr *)(&ehci->caplength);
+	hcor = (struct ehci_hcor *)
+		((void *)hccr + HC_LENGTH(ehci_readl(&hccr->cr_capbase)));
+
+	ehci_ctrl->has_fsl_erratum_a005275 = has_erratum_a005275();
+
+	if (ehci_fsl_init(priv, ehci, hccr, hcor) < 0)
+		return -ENXIO;
+
+	debug("ehci-fsl: init hccr %p and hcor %p hc_length %d\n",
+	      (void *)hccr, (void *)hcor,
+	      HC_LENGTH(ehci_readl(&hccr->cr_capbase)));
+
+	return ehci_register(dev, hccr, hcor, &fsl_ehci_ops, 0, USB_INIT_HOST);
+}
+
+static const struct udevice_id ehci_usb_ids[] = {
+	{ .compatible = "fsl-usb2-mph", },
+	{ .compatible = "fsl-usb2-dr", },
+	{ }
+};
+
+U_BOOT_DRIVER(ehci_fsl) = {
+	.name	= "ehci_fsl",
+	.id	= UCLASS_USB,
+	.of_match = ehci_usb_ids,
+	.of_to_plat = ehci_fsl_of_to_plat,
+	.probe = ehci_fsl_probe,
+	.remove = ehci_deregister,
+	.ops	= &ehci_usb_ops,
+	.plat_auto	= sizeof(struct usb_plat),
+	.priv_auto	= sizeof(struct ehci_fsl_priv),
+	.flags	= DM_FLAG_ALLOC_PRIV_DMA,
+};
+
+static int ehci_fsl_init(struct ehci_fsl_priv *priv, struct usb_ehci *ehci,
+		  struct ehci_hccr *hccr, struct ehci_hcor *hcor)
+{
 	const char *phy_type = NULL;
-	size_t len;
-	char current_usb_controller[5];
 #ifdef CONFIG_SYS_FSL_USB_INTERNAL_UTMI_PHY
 	char usb_phy[5];
 
@@ -64,25 +157,6 @@ int ehci_hcd_init(int index, enum usb_init_type init,
 		 */
 		mdelay(5);
 	}
-	memset(current_usb_controller, '\0', 5);
-	snprintf(current_usb_controller, sizeof(current_usb_controller),
-		 "usb%d", index+1);
-
-	switch (index) {
-	case 0:
-		ehci = (struct usb_ehci *)CONFIG_SYS_FSL_USB1_ADDR;
-		break;
-	case 1:
-		ehci = (struct usb_ehci *)CONFIG_SYS_FSL_USB2_ADDR;
-		break;
-	default:
-		printf("ERROR: wrong controller index!!\n");
-		return -EINVAL;
-	};
-
-	*hccr = (struct ehci_hccr *)((uint32_t)&ehci->caplength);
-	*hcor = (struct ehci_hcor *)((uint32_t) *hccr +
-			HC_LENGTH(ehci_readl(&(*hccr)->cr_capbase)));
 
 	/* Set to Host mode */
 	setbits_le32(&ehci->usbmode, CM_HOST);
@@ -91,11 +165,10 @@ int ehci_hcd_init(int index, enum usb_init_type init,
 	out_be32(&ehci->snoop2, 0x80000000 | SNOOP_SIZE_2GB);
 
 	/* Init phy */
-	if (hwconfig_sub(current_usb_controller, "phy_type"))
-		phy_type = hwconfig_subarg(current_usb_controller,
-				"phy_type", &len);
+	if (priv->phy_type)
+		phy_type = priv->phy_type;
 	else
-		phy_type = getenv("usb_phy_type");
+		phy_type = env_get("usb_phy_type");
 
 	if (!phy_type) {
 #ifdef CONFIG_SYS_FSL_USB_INTERNAL_UTMI_PHY
@@ -116,7 +189,7 @@ int ehci_hcd_init(int index, enum usb_init_type init,
 				UTMI_PHY_EN);
 		udelay(1000); /* delay required for PHY Clk to appear */
 #endif
-		out_le32(&(*hcor)->or_portsc[0], PORT_PTS_UTMI);
+		out_le32(&(hcor)->or_portsc[0], PORT_PTS_UTMI);
 		clrsetbits_be32(&ehci->control, CONTROL_REGISTER_W1C_MASK,
 				USB_EN);
 	} else {
@@ -127,7 +200,7 @@ int ehci_hcd_init(int index, enum usb_init_type init,
 		udelay(1000); /* delay required for PHY Clk to appear */
 		if (!usb_phy_clk_valid(ehci))
 			return -EINVAL;
-		out_le32(&(*hcor)->or_portsc[0], PORT_PTS_ULPI);
+		out_le32(&(hcor)->or_portsc[0], PORT_PTS_ULPI);
 	}
 
 	out_be32(&ehci->prictrl, 0x0000000c);
@@ -149,15 +222,6 @@ int ehci_hcd_init(int index, enum usb_init_type init,
 		 */
 		udelay(1);
 	}
-	return 0;
-}
-
-/*
- * Destroy the appropriate control structures corresponding
- * the the EHCI host controller.
- */
-int ehci_hcd_stop(int index)
-{
 	return 0;
 }
 

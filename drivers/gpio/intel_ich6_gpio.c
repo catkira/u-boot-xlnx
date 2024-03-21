@@ -1,6 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2012 The Chromium OS Authors.
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -30,9 +30,11 @@
 #include <dm.h>
 #include <errno.h>
 #include <fdtdec.h>
+#include <log.h>
 #include <pch.h>
 #include <pci.h>
 #include <asm/cpu.h>
+#include <asm/global_data.h>
 #include <asm/gpio.h>
 #include <asm/io.h>
 #include <asm/pci.h>
@@ -46,22 +48,31 @@ struct ich6_bank_priv {
 	uint16_t use_sel;
 	uint16_t io_sel;
 	uint16_t lvl;
+	u32 lvl_write_cache;
+	bool use_lvl_write_cache;
 };
 
 #define GPIO_USESEL_OFFSET(x)	(x)
 #define GPIO_IOSEL_OFFSET(x)	(x + 4)
 #define GPIO_LVL_OFFSET(x)	(x + 8)
 
-static int _ich6_gpio_set_value(uint16_t base, unsigned offset, int value)
+static int _ich6_gpio_set_value(struct ich6_bank_priv *bank, unsigned offset,
+				int value)
 {
 	u32 val;
 
-	val = inl(base);
+	if (bank->use_lvl_write_cache)
+		val = bank->lvl_write_cache;
+	else
+		val = inl(bank->lvl);
+
 	if (value)
 		val |= (1UL << offset);
 	else
 		val &= ~(1UL << offset);
-	outl(val, base);
+	outl(val, bank->lvl);
+	if (bank->use_lvl_write_cache)
+		bank->lvl_write_cache = val;
 
 	return 0;
 }
@@ -83,9 +94,9 @@ static int _ich6_gpio_set_direction(uint16_t base, unsigned offset, int dir)
 	return 0;
 }
 
-static int gpio_ich6_ofdata_to_platdata(struct udevice *dev)
+static int gpio_ich6_of_to_plat(struct udevice *dev)
 {
-	struct ich6_bank_platdata *plat = dev_get_platdata(dev);
+	struct ich6_bank_plat *plat = dev_get_plat(dev);
 	u32 gpiobase;
 	int offset;
 	int ret;
@@ -94,14 +105,14 @@ static int gpio_ich6_ofdata_to_platdata(struct udevice *dev)
 	if (ret)
 		return ret;
 
-	offset = fdtdec_get_int(gd->fdt_blob, dev->of_offset, "reg", -1);
+	offset = fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev), "reg", -1);
 	if (offset == -1) {
 		debug("%s: Invalid register offset %d\n", __func__, offset);
 		return -EINVAL;
 	}
 	plat->offset = offset;
 	plat->base_addr = gpiobase + offset;
-	plat->bank_name = fdt_getprop(gd->fdt_blob, dev->of_offset,
+	plat->bank_name = fdt_getprop(gd->fdt_blob, dev_of_offset(dev),
 				      "bank-name", NULL);
 
 	return 0;
@@ -109,15 +120,24 @@ static int gpio_ich6_ofdata_to_platdata(struct udevice *dev)
 
 static int ich6_gpio_probe(struct udevice *dev)
 {
-	struct ich6_bank_platdata *plat = dev_get_platdata(dev);
+	struct ich6_bank_plat *plat = dev_get_plat(dev);
 	struct gpio_dev_priv *uc_priv = dev_get_uclass_priv(dev);
 	struct ich6_bank_priv *bank = dev_get_priv(dev);
+	const void *prop;
 
 	uc_priv->gpio_count = GPIO_PER_BANK;
 	uc_priv->bank_name = plat->bank_name;
 	bank->use_sel = plat->base_addr;
 	bank->io_sel = plat->base_addr + 4;
 	bank->lvl = plat->base_addr + 8;
+
+	prop = fdt_getprop(gd->fdt_blob, dev_of_offset(dev),
+			   "use-lvl-write-cache", NULL);
+	if (prop)
+		bank->use_lvl_write_cache = true;
+	else
+		bank->use_lvl_write_cache = false;
+	bank->lvl_write_cache = 0;
 
 	return 0;
 }
@@ -160,7 +180,7 @@ static int ich6_gpio_direction_output(struct udevice *dev, unsigned offset,
 	if (ret)
 		return ret;
 
-	return _ich6_gpio_set_value(bank->lvl, offset, value);
+	return _ich6_gpio_set_value(bank, offset, value);
 }
 
 static int ich6_gpio_get_value(struct udevice *dev, unsigned offset)
@@ -170,6 +190,8 @@ static int ich6_gpio_get_value(struct udevice *dev, unsigned offset)
 	int r;
 
 	tmplong = inl(bank->lvl);
+	if (bank->use_lvl_write_cache)
+		tmplong |= bank->lvl_write_cache;
 	r = (tmplong & (1UL << offset)) ? 1 : 0;
 	return r;
 }
@@ -178,7 +200,7 @@ static int ich6_gpio_set_value(struct udevice *dev, unsigned offset,
 			       int value)
 {
 	struct ich6_bank_priv *bank = dev_get_priv(dev);
-	return _ich6_gpio_set_value(bank->lvl, offset, value);
+	return _ich6_gpio_set_value(bank, offset, value);
 }
 
 static int ich6_gpio_get_function(struct udevice *dev, unsigned offset)
@@ -213,8 +235,8 @@ U_BOOT_DRIVER(gpio_ich6) = {
 	.id	= UCLASS_GPIO,
 	.of_match = intel_ich6_gpio_ids,
 	.ops	= &gpio_ich6_ops,
-	.ofdata_to_platdata	= gpio_ich6_ofdata_to_platdata,
+	.of_to_plat	= gpio_ich6_of_to_plat,
 	.probe	= ich6_gpio_probe,
-	.priv_auto_alloc_size = sizeof(struct ich6_bank_priv),
-	.platdata_auto_alloc_size = sizeof(struct ich6_bank_platdata),
+	.priv_auto	= sizeof(struct ich6_bank_priv),
+	.plat_auto	= sizeof(struct ich6_bank_plat),
 };

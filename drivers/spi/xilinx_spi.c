@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Xilinx SPI driver
  *
@@ -9,19 +10,19 @@
  * Copyright (c) 2010 Graeme Smecher <graeme.smecher@mail.mcgill.ca>
  * Copyright (c) 2010 Thomas Chou <thomas@wytron.com.tw>
  * Copyright (c) 2005-2008 Analog Devices Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
 #include <common.h>
 #include <dm.h>
 #include <errno.h>
+#include <log.h>
 #include <malloc.h>
 #include <spi.h>
+#include <spi-mem.h>
 #include <asm/io.h>
-
-DECLARE_GLOBAL_DATA_PTR;
+#include <wait_bit.h>
+#include <linux/bitops.h>
 
 /*
  * [0]: http://www.xilinx.com/support/documentation
@@ -76,14 +77,9 @@ DECLARE_GLOBAL_DATA_PTR;
 				SPICR_SPE | SPICR_MASTER_INHIBIT)
 #define XILSPI_SPICR_DFLT_OFF	(SPICR_MASTER_INHIBIT | SPICR_MANUAL_SS)
 
-#ifndef CONFIG_XILINX_SPI_IDLE_VAL
-#define CONFIG_XILINX_SPI_IDLE_VAL	GENMASK(7, 0)
-#endif
+#define XILINX_SPI_IDLE_VAL	GENMASK(7, 0)
 
-#define XILINX_SPI_QUAD_MODE	2
-
-#define XILINX_SPI_QUAD_EXTRA_DUMMY	3
-#define SPI_QUAD_OUT_FAST_READ		0x6B
+#define XILINX_SPISR_TIMEOUT	10000 /* in milliseconds */
 
 /* xilinx spi register set */
 struct xilinx_spi_regs {
@@ -110,29 +106,28 @@ struct xilinx_spi_priv {
 	unsigned int freq;
 	unsigned int mode;
 	unsigned int fifo_depth;
+	u8 startup;
 };
-
-static int xilinx_spi_child_pre_probe(struct udevice *bus)
-{
-	struct spi_slave *slave = dev_get_parent_priv(bus);
-	struct udevice *dev = dev_get_parent(bus);
-	int spimode;
-
-	spimode = fdtdec_get_int(gd->fdt_blob, dev->of_offset, "xlnx,spi-mode",
-				 -1);
-
-	if (spimode == XILINX_SPI_QUAD_MODE)
-		slave->op_mode_rx = SPI_OPM_RX_QOF;
-
-	return 0;
-}
 
 static int xilinx_spi_probe(struct udevice *bus)
 {
 	struct xilinx_spi_priv *priv = dev_get_priv(bus);
 	struct xilinx_spi_regs *regs = priv->regs;
 
+	priv->regs = (struct xilinx_spi_regs *)dev_read_addr(bus);
+
+	priv->fifo_depth = dev_read_u32_default(bus, "fifo-size", 0);
+
 	writel(SPISSR_RESET_VALUE, &regs->srr);
+
+	/*
+	 * Reset RX & TX FIFO
+	 * Enable Manual Slave Select Assertion,
+	 * Set SPI controller into master mode, and enable it
+	 */
+	writel(SPICR_RXFIFO_RESEST | SPICR_TXFIFO_RESEST |
+	       SPICR_MANUAL_SS | SPICR_MASTER_MODE | SPICR_SPE,
+	       &regs->spicr);
 
 	return 0;
 }
@@ -156,7 +151,6 @@ static void spi_cs_deactivate(struct udevice *dev)
 	reg = readl(&regs->spicr) | SPICR_RXFIFO_RESEST | SPICR_TXFIFO_RESEST;
 	writel(reg, &regs->spicr);
 	writel(SPISSR_OFF, &regs->spissr);
-
 }
 
 static int xilinx_spi_claim_bus(struct udevice *dev)
@@ -182,6 +176,7 @@ static int xilinx_spi_release_bus(struct udevice *dev)
 
 	return 0;
 }
+
 static u32 xilinx_spi_fill_txfifo(struct udevice *bus, const u8 *txp,
 				  u32 txbytes)
 {
@@ -192,13 +187,14 @@ static u32 xilinx_spi_fill_txfifo(struct udevice *bus, const u8 *txp,
 
 	while (txbytes && !(readl(&regs->spisr) & SPISR_TX_FULL) &&
 	       i < priv->fifo_depth) {
-		d = txp ? *txp++ : CONFIG_XILINX_SPI_IDLE_VAL;
+		d = txp ? *txp++ : XILINX_SPI_IDLE_VAL;
 		debug("spi_xfer: tx:%x ", d);
 		/* write out and wait for processing (receive data) */
 		writel(d & SPIDTR_8BIT_MASK, &regs->spidtr);
 		txbytes--;
 		i++;
 	}
+
 	return i;
 }
 
@@ -222,76 +218,171 @@ static u32 xilinx_spi_read_rxfifo(struct udevice *bus, u8 *rxp, u32 rxbytes)
 	return i;
 }
 
-static int xilinx_spi_xfer(struct udevice *dev, unsigned int bitlen,
-			    const void *dout, void *din, unsigned long flags)
+static int start_transfer(struct spi_slave *spi, const void *dout, void *din, u32 len)
 {
-	struct udevice *bus = dev_get_parent(dev);
+	struct udevice *bus = spi->dev->parent;
 	struct xilinx_spi_priv *priv = dev_get_priv(bus);
 	struct xilinx_spi_regs *regs = priv->regs;
-	struct dm_spi_slave_platdata *slave_plat = dev_get_parent_platdata(dev);
-	/* assume spi core configured to do 8 bit transfers */
-	unsigned int bytes = bitlen / XILSPI_MAX_XFER_BITS;
-	const unsigned char *txp = dout;
-	unsigned char *rxp = din;
-	u32 txbytes = bytes;
-	u32 rxbytes = bytes;
-	u32 reg, count, timeout;
+	u32 count, txbytes, rxbytes;
+	int reg, ret;
+	const unsigned char *txp = (const unsigned char *)dout;
+	unsigned char *rxp = (unsigned char *)din;
 
-	debug("spi_xfer: bus:%i cs:%i bitlen:%i bytes:%i flags:%lx\n",
-	      bus->seq, slave_plat->cs, bitlen, bytes, flags);
-
-	if (bitlen == 0)
-		goto done;
-
-	if (bitlen % XILSPI_MAX_XFER_BITS) {
-		printf("XILSPI warning: Not a multiple of %d bits\n",
-		       XILSPI_MAX_XFER_BITS);
-		flags |= SPI_XFER_END;
-		goto done;
-	}
-
-	if (flags & SPI_XFER_BEGIN) {
-		spi_cs_activate(dev, slave_plat->cs);
-		/* FIX ME Temporary hack to fix Quad read
-		 * check if the command is Quad out fast read
-		 * and increase dummy bytes by 3 so a total of 4
-		 * (3 here + 1 from framework)
-		 */
-		if (*txp == SPI_QUAD_OUT_FAST_READ) {
-			txbytes += XILINX_SPI_QUAD_EXTRA_DUMMY;
-			rxbytes += XILINX_SPI_QUAD_EXTRA_DUMMY;
-		}
-	}
-
-	while (txbytes && rxbytes) {
+	txbytes = len;
+	rxbytes = len;
+	while (txbytes || rxbytes) {
+		/* Disable master transaction */
+		reg = readl(&regs->spicr) | SPICR_MASTER_INHIBIT;
+		writel(reg, &regs->spicr);
 		count = xilinx_spi_fill_txfifo(bus, txp, txbytes);
+		/* Enable master transaction */
 		reg = readl(&regs->spicr) & ~SPICR_MASTER_INHIBIT;
 		writel(reg, &regs->spicr);
 		txbytes -= count;
-		txp += count;
+		if (txp)
+			txp += count;
 
-		timeout = 10000000;
-		do {
-			udelay(1);
-		} while (!(readl(&regs->spisr) & SPISR_TX_EMPTY) && timeout--);
-
-		if (!timeout) {
+		ret = wait_for_bit_le32(&regs->spisr, SPISR_TX_EMPTY, true,
+					XILINX_SPISR_TIMEOUT, false);
+		if (ret < 0) {
 			printf("XILSPI error: Xfer timeout\n");
-			return -1;
+			return ret;
 		}
 
-		debug("txbytes:0x%x,txp:0x%p\n", txbytes, txp);
+		reg = readl(&regs->spicr) | SPICR_MASTER_INHIBIT;
+		writel(reg, &regs->spicr);
 		count = xilinx_spi_read_rxfifo(bus, rxp, rxbytes);
 		rxbytes -= count;
-		rxp += count;
-		debug("rxbytes:0x%x rxp:0x%p\n", rxbytes, rxp);
+		if (rxp)
+			rxp += count;
 	}
 
- done:
-	if (flags & SPI_XFER_END)
-		spi_cs_deactivate(dev);
-
 	return 0;
+}
+
+static void xilinx_spi_startup_block(struct spi_slave *spi)
+{
+	struct dm_spi_slave_plat *slave_plat =
+				dev_get_parent_plat(spi->dev);
+	unsigned char txp;
+	unsigned char rxp[8];
+
+	/*
+	 * Perform a dummy read as a work around for
+	 * the startup block issue.
+	 */
+	spi_cs_activate(spi->dev, slave_plat->cs[0]);
+	txp = 0x9f;
+	start_transfer(spi, (void *)&txp, NULL, 1);
+
+	start_transfer(spi, NULL, (void *)rxp, 6);
+
+	spi_cs_deactivate(spi->dev);
+}
+
+static int xilinx_spi_mem_exec_op(struct spi_slave *spi,
+				  const struct spi_mem_op *op)
+{
+	struct dm_spi_slave_plat *slave_plat =
+				dev_get_parent_plat(spi->dev);
+	static u32 startup;
+	u32 dummy_len, ret;
+
+	/*
+	 * This is the work around for the startup block issue in
+	 * the spi controller. SPI clock is passing through STARTUP
+	 * block to FLASH. STARTUP block don't provide clock as soon
+	 * as QSPI provides command. So first command fails.
+	 */
+	if (!startup) {
+		xilinx_spi_startup_block(spi);
+		startup++;
+	}
+
+	spi_cs_activate(spi->dev, slave_plat->cs[0]);
+
+	if (op->cmd.opcode) {
+		ret = start_transfer(spi, (void *)&op->cmd.opcode, NULL, 1);
+		if (ret)
+			goto done;
+	}
+	if (op->addr.nbytes) {
+		int i;
+		u8 addr_buf[4];
+
+		for (i = 0; i < op->addr.nbytes; i++)
+			addr_buf[i] = op->addr.val >>
+			(8 * (op->addr.nbytes - i - 1));
+
+		ret = start_transfer(spi, (void *)addr_buf, NULL,
+				     op->addr.nbytes);
+		if (ret)
+			goto done;
+	}
+	if (op->dummy.nbytes) {
+		dummy_len = (op->dummy.nbytes * op->data.buswidth) /
+			     op->dummy.buswidth;
+
+		ret = start_transfer(spi, NULL, NULL, dummy_len);
+		if (ret)
+			goto done;
+	}
+	if (op->data.nbytes) {
+		if (op->data.dir == SPI_MEM_DATA_IN) {
+			ret = start_transfer(spi, NULL,
+					     op->data.buf.in, op->data.nbytes);
+		} else {
+			ret = start_transfer(spi, op->data.buf.out,
+					     NULL, op->data.nbytes);
+		}
+		if (ret)
+			goto done;
+	}
+done:
+	spi_cs_deactivate(spi->dev);
+
+	return ret;
+}
+
+static int xilinx_qspi_check_buswidth(struct spi_slave *slave, u8 width)
+{
+	u32 mode = slave->mode;
+
+	switch (width) {
+	case 1:
+		return 0;
+	case 2:
+		if (mode & SPI_RX_DUAL)
+			return 0;
+		break;
+	case 4:
+		if (mode & SPI_RX_QUAD)
+			return 0;
+		break;
+	}
+
+	return -EOPNOTSUPP;
+}
+
+bool xilinx_qspi_mem_exec_op(struct spi_slave *slave,
+			     const struct spi_mem_op *op)
+{
+	if (xilinx_qspi_check_buswidth(slave, op->cmd.buswidth))
+		return false;
+
+	if (op->addr.nbytes &&
+	    xilinx_qspi_check_buswidth(slave, op->addr.buswidth))
+		return false;
+
+	if (op->dummy.nbytes &&
+	    xilinx_qspi_check_buswidth(slave, op->dummy.buswidth))
+		return false;
+
+	if (op->data.dir != SPI_MEM_NO_DATA &&
+	    xilinx_qspi_check_buswidth(slave, op->data.buswidth))
+		return false;
+
+	return true;
 }
 
 static int xilinx_spi_set_speed(struct udevice *bus, uint speed)
@@ -300,8 +391,7 @@ static int xilinx_spi_set_speed(struct udevice *bus, uint speed)
 
 	priv->freq = speed;
 
-	debug("xilinx_spi_set_speed: regs=%p, speed=%d\n", priv->regs,
-	      priv->freq);
+	debug("%s: regs=%p, speed=%d\n", __func__, priv->regs, priv->freq);
 
 	return 0;
 }
@@ -310,7 +400,7 @@ static int xilinx_spi_set_mode(struct udevice *bus, uint mode)
 {
 	struct xilinx_spi_priv *priv = dev_get_priv(bus);
 	struct xilinx_spi_regs *regs = priv->regs;
-	uint32_t spicr;
+	u32 spicr;
 
 	spicr = readl(&regs->spicr);
 	if (mode & SPI_LSB_FIRST)
@@ -325,34 +415,23 @@ static int xilinx_spi_set_mode(struct udevice *bus, uint mode)
 	writel(spicr, &regs->spicr);
 	priv->mode = mode;
 
-	debug("xilinx_spi_set_mode: regs=%p, mode=%d\n", priv->regs,
-	      priv->mode);
+	debug("%s: regs=%p, mode=%d\n", __func__, priv->regs, priv->mode);
 
 	return 0;
 }
+
+static const struct spi_controller_mem_ops xilinx_spi_mem_ops = {
+	.exec_op = xilinx_spi_mem_exec_op,
+	.supports_op = xilinx_qspi_mem_exec_op,
+};
 
 static const struct dm_spi_ops xilinx_spi_ops = {
 	.claim_bus	= xilinx_spi_claim_bus,
 	.release_bus	= xilinx_spi_release_bus,
-	.xfer		= xilinx_spi_xfer,
 	.set_speed	= xilinx_spi_set_speed,
 	.set_mode	= xilinx_spi_set_mode,
+	.mem_ops	= &xilinx_spi_mem_ops,
 };
-
-
-static int xilinx_spi_ofdata_to_platdata(struct udevice *bus)
-{
-	struct xilinx_spi_priv *priv = dev_get_priv(bus);
-
-	priv->regs = (struct xilinx_spi_regs *)dev_get_addr(bus);
-
-	debug("%s: regs=%p\n", __func__, priv->regs);
-
-	priv->fifo_depth = fdtdec_get_int(gd->fdt_blob, bus->of_offset,
-					  "fifo-size", 0);
-
-	return 0;
-}
 
 static const struct udevice_id xilinx_spi_ids[] = {
 	{ .compatible = "xlnx,xps-spi-2.00.a" },
@@ -365,8 +444,6 @@ U_BOOT_DRIVER(xilinx_spi) = {
 	.id	= UCLASS_SPI,
 	.of_match = xilinx_spi_ids,
 	.ops	= &xilinx_spi_ops,
-	.ofdata_to_platdata = xilinx_spi_ofdata_to_platdata,
-	.priv_auto_alloc_size = sizeof(struct xilinx_spi_priv),
+	.priv_auto	= sizeof(struct xilinx_spi_priv),
 	.probe	= xilinx_spi_probe,
-	.child_pre_probe = xilinx_spi_child_pre_probe,
 };

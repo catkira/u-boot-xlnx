@@ -12,7 +12,7 @@ config SYS_SOC
 config SYS_CONFIG_NAME
 	default "cougarcanyon2"
 
-config SYS_TEXT_BASE
+config TEXT_BASE
 	default 0xffe00000
 
 config BOARD_SPECIFIC_OPTIONS # dummy
@@ -21,5 +21,7 @@ config BOARD_SPECIFIC_OPTIONS # dummy
 	select NORTHBRIDGE_INTEL_IVYBRIDGE
 	select HAVE_FSP
 	select BOARD_ROMSIZE_KB_2048
+	select BOARD_EARLY_INIT_F
+	select SPI_FLASH_WINBOND
 
 endif
