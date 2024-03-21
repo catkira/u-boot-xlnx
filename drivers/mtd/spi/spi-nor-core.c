@@ -5811,6 +5811,8 @@ void spi_nor_set_fixups(struct spi_nor *nor)
 #endif /* SPI_FLASH_MACRONIX */
 }
 
+int pluto_revA;
+
 int spi_nor_scan(struct spi_nor *nor)
 {
 	struct spi_nor_flash_parameter params;
@@ -5867,6 +5869,15 @@ int spi_nor_scan(struct spi_nor *nor)
 	if (IS_ERR_OR_NULL(info))
 		return -ENOENT;
 	nor->info = info;
+
+    u16 jedec, ext_jedec;
+	jedec = info->id[1] << 8 | info->id[2];
+	ext_jedec = info->id[3] << 8 | info->id[4];
+
+	if (jedec == 0xBB19 && ext_jedec == 0x1000 && info->id[5] == 0)
+		pluto_revA = 1;
+	else
+		pluto_revA = 0;
 
 	spi_nor_set_fixups(nor);
 

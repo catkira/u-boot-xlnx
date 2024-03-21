@@ -116,7 +116,7 @@ int misc_init_r(void)
 	gpio_direction_input(BUTTON_GPIO);
 
 	if (!gpio_get_value(BUTTON_GPIO))
-		set_default_env("Button pressed: Using default environment\n");
+		env_set_default("Button pressed: Using default environment\n", 0);
 
 	return 0;
 }
