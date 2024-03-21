@@ -15,7 +15,7 @@
 // # define CONFIG_CPU_FREQ_HZ	800000000
 // #endif
 
-#define	CONFIG_SYS_DEVICE_NULLDEV	1
+// #define	CONFIG_SYS_DEVICE_NULLDEV	1
 
 /* Cache options */
 #ifndef CONFIG_SYS_L2CACHE_OFF
