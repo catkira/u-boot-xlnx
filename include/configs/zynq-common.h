@@ -9,14 +9,6 @@
 #ifndef __CONFIG_ZYNQ_COMMON_H
 #define __CONFIG_ZYNQ_COMMON_H
 
-// #define CONFIG_MISC_INIT_R
-// /* CPU clock */
-// #ifndef CONFIG_CPU_FREQ_HZ
-// # define CONFIG_CPU_FREQ_HZ	800000000
-// #endif
-
-// #define	CONFIG_SYS_DEVICE_NULLDEV	1
-
 /* Cache options */
 #ifndef CONFIG_SYS_L2CACHE_OFF
 # define CONFIG_SYS_PL310_BASE		0xf8f02000
@@ -122,52 +114,8 @@
 # define CONFIG_MTD_DEVICE
 #endif
 
-#if defined(CONFIG_ZYNQ_I2C0) || defined(CONFIG_ZYNQ_I2C1)
-#define CONFIG_SYS_I2C_ZYNQ
-#endif
-
-/* I2C */
-#if defined(CONFIG_SYS_I2C_ZYNQ)
-# define CONFIG_SYS_I2C
-# define CONFIG_SYS_I2C_ZYNQ_SPEED		100000
-# define CONFIG_SYS_I2C_ZYNQ_SLAVE		0
-#endif
-
-/* EEPROM */
-#ifdef CONFIG_ZYNQ_EEPROM
-# define CONFIG_CMD_EEPROM
-# define CONFIG_SYS_I2C_EEPROM_ADDR_LEN		1
-# define CONFIG_SYS_I2C_EEPROM_ADDR		0x54
-# define CONFIG_SYS_EEPROM_PAGE_WRITE_BITS	4
-# define CONFIG_SYS_EEPROM_PAGE_WRITE_DELAY_MS	5
-# define CONFIG_SYS_EEPROM_SIZE			1024 /* Bytes */
-# define CONFIG_SYS_I2C_MUX_ADDR		0x74
-# define CONFIG_SYS_I2C_MUX_EEPROM_SEL		0x4
-#endif
-
 /* Allow to overwrite serial and ethaddr */
 #define CONFIG_ENV_OVERWRITE
-
-/* Environment */
-#ifndef CONFIG_ENV_IS_NOWHERE
-# ifndef CONFIG_SYS_NO_FLASH
-/* Environment in NOR flash */
-#  define CONFIG_ENV_IS_IN_FLASH
-# elif defined(CONFIG_ZYNQ_QSPI)
-/* Environment in Serial Flash */
-#  define CONFIG_ENV_IS_IN_SPI_FLASH
-# elif defined(CONFIG_NAND_ZYNQ)
-/* Environment in NAND flash */
-#  define CONFIG_ENV_IS_IN_NAND
-# elif defined(CONFIG_SYS_NO_FLASH)
-#  define CONFIG_ENV_IS_NOWHERE
-# endif
-
-# define CONFIG_ENV_SECT_SIZE		CONFIG_ENV_SIZE
-# ifndef CONFIG_ENV_OFFSET
-#  define CONFIG_ENV_OFFSET		0x100000
-# endif
-#endif
 
 /* enable preboot to be loaded before CONFIG_BOOTDELAY */
 
@@ -298,10 +246,6 @@
 #include <config_distro_bootcmd.h>
 #endif /* CONFIG_SPL_BUILD */
 
-/* Initial bootstrap JTAG u-boot
-#define CONFIG_ENV_IS_NOWHERE
-#define CONFIG_BOOTCOMMAND		"run jtagboot"
-*/
 
 /* Default environment */
 #ifndef CONFIG_EXTRA_ENV_SETTINGS
