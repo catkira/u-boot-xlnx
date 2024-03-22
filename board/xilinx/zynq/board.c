@@ -105,31 +105,6 @@ int board_late_init(void)
 	return board_late_init_xilinx();
 }
 
-#ifdef CONFIG_MISC_INIT_R
-#include <asm/gpio.h>
-#include <env_internal.h>
-int misc_init_r(void)
-{
-#define BUTTON_GPIO 14
-
-	gpio_request(BUTTON_GPIO, "SWITCH");
-	gpio_direction_input(BUTTON_GPIO);
-
-	if (!gpio_get_value(BUTTON_GPIO))
-		env_set_default("Button pressed: Using default environment\n", 0);
-
-	return 0;
-}
-#endif
-
-#ifdef CONFIG_DISPLAY_BOARDINFO
-int checkboard(void)
-{
-	puts("Board: Xilinx Zynq\n");
-	return 0;
-}
-#endif
-
 #if !defined(CONFIG_SYS_SDRAM_BASE) && !defined(CONFIG_SYS_SDRAM_SIZE)
 int dram_init_banksize(void)
 {
