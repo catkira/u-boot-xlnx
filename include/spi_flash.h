@@ -209,11 +209,8 @@ static inline int spi_flash_erase(struct spi_flash *flash, u32 offset,
 static inline int spi_flash_protect(struct spi_flash *flash, u32 ofs, u32 len,
 					bool prot)
 {
-	if (!flash->flash_lock || !flash->flash_unlock) {
-		printf("*** Warning: flash lock/unlock ops not supported "
-		       " for '%s'\n", flash->name);
-		return 0;
-	}
+	if (!flash->flash_lock || !flash->flash_unlock)
+		return -EOPNOTSUPP;
 
 	if (prot)
 		return flash->flash_lock(flash, ofs, len);
