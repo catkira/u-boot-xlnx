@@ -8,7 +8,6 @@ ifndef CONFIG_SPL_BUILD
 obj-y += boot.o
 obj-$(CONFIG_CMD_BOOTM) += bootm.o
 obj-y += help.o
-obj-y += xadcps.o
 obj-y += panic.o
 obj-y += version.o
 
