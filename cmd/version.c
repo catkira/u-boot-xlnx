@@ -43,4 +43,3 @@ U_BOOT_CMD(
 	"print monitor, compiler and linker version",
 	""
 );
-
