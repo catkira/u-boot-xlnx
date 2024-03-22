@@ -11,7 +11,6 @@
 #include <version.h>
 #include <version_string.h>
 #include <linux/compiler.h>
-#include <env.h>
 #ifdef CONFIG_SYS_COREBOOT
 #include <asm/cb_sysinfo.h>
 #endif
