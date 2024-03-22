@@ -21,19 +21,6 @@
 #include <openssl/evp.h>
 #include <openssl/engine.h>
 
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-static void RSA_get0_key(const RSA *r,
-                 const BIGNUM **n, const BIGNUM **e, const BIGNUM **d)
-{
-   if (n != NULL)
-       *n = r->n;
-   if (e != NULL)
-       *e = r->e;
-   if (d != NULL)
-       *d = r->d;
-}
-#endif
-
 static int rsa_err(const char *msg)
 {
 	unsigned long sslErr = ERR_get_error();
