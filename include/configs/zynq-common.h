@@ -364,6 +364,8 @@
 		"fi\0" \
 	"sdboot=if mmcinfo; then " \
 			"run uenvboot; " \
+			"itest *f8000258 == 480003 && run clear_reset_cause && run dfu_sf; " \
+			"itest *f8000258 == 480007 && run clear_reset_cause && run ramboot_verbose; " \
 			"echo Starting Linux from SD... && " \
 			"bootm ${fit_load_address}; " \
 		"fi\0" \
