@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * From Coreboot file of same name
  *
  * Copyright (C) 2007-2009 coresystems GmbH
  * Copyright (C) 2011 The Chromium Authors
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
@@ -20,8 +19,9 @@
 #include <asm/processor.h>
 #include <asm/speedstep.h>
 #include <asm/turbo.h>
-#include <asm/arch/bd82x6x.h>
 #include <asm/arch/model_206ax.h>
+
+DECLARE_GLOBAL_DATA_PTR;
 
 static void enable_vmx(void)
 {
@@ -287,8 +287,8 @@ static int configure_thermal_target(struct udevice *dev)
 	int tcc_offset;
 	msr_t msr;
 
-	tcc_offset = fdtdec_get_int(gd->fdt_blob, dev->of_offset, "tcc-offset",
-				    0);
+	tcc_offset = fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev),
+				    "tcc-offset", 0);
 
 	/* Set TCC activaiton offset if supported */
 	msr = msr_read(MSR_PLATFORM_INFO);
@@ -393,27 +393,12 @@ static void configure_mca(void)
 		msr_write(IA32_MC0_STATUS + (i * 4), msr);
 }
 
-#if CONFIG_USBDEBUG
-static unsigned ehci_debug_addr;
-#endif
-
 static int model_206ax_init(struct udevice *dev)
 {
 	int ret;
 
 	/* Clear out pending MCEs */
 	configure_mca();
-
-#if CONFIG_USBDEBUG
-	/* Is this caution really needed? */
-	if (!ehci_debug_addr)
-		ehci_debug_addr = get_ehci_debug();
-	set_ehci_debug(0);
-#endif
-
-#if CONFIG_USBDEBUG
-	set_ehci_debug(ehci_debug_addr);
-#endif
 
 	/* Enable the local cpu apics */
 	enable_lapic_tpr();
@@ -478,6 +463,7 @@ static const struct cpu_ops cpu_x86_model_206ax_ops = {
 	.get_desc	= cpu_x86_get_desc,
 	.get_info	= model_206ax_get_info,
 	.get_count	= model_206ax_get_count,
+	.get_vendor	= cpu_x86_get_vendor,
 };
 
 static const struct udevice_id cpu_x86_model_206ax_ids[] = {
@@ -492,4 +478,5 @@ U_BOOT_DRIVER(cpu_x86_model_206ax_drv) = {
 	.bind		= cpu_x86_bind,
 	.probe		= cpu_x86_model_206ax_probe,
 	.ops		= &cpu_x86_model_206ax_ops,
+	.flags		= DM_FLAG_PRE_RELOC,
 };

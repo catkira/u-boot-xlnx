@@ -1,16 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014 Google, Inc
  * Copyright (C) 2000 Ronald G. Minnich
  *
  * Microcode update for Intel PIII and later CPUs
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
 #include <errno.h>
 #include <fdtdec.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include <asm/cpu.h>
 #include <asm/microcode.h>
 #include <asm/msr.h>
@@ -43,9 +42,7 @@ static int microcode_decode_node(const void *blob, int node,
 {
 	update->data = fdt_getprop(blob, node, "data", &update->size);
 	if (!update->data)
-		return -EINVAL;
-	update->data += UCODE_HEADER_LEN;
-	update->size -= UCODE_HEADER_LEN;
+		return -ENOENT;
 
 	update->header_version = fdtdec_get_int(blob, node,
 						"intel,header-version", 0);
@@ -125,6 +122,7 @@ static void microcode_read_cpu(struct microcode_update *cpu)
 int microcode_update_intel(void)
 {
 	struct microcode_update cpu, update;
+	ulong address;
 	const void *blob = gd->fdt_blob;
 	int skipped;
 	int count;
@@ -145,6 +143,16 @@ int microcode_update_intel(void)
 		}
 
 		ret = microcode_decode_node(blob, node, &update);
+		if (ret == -ENOENT && ucode_base) {
+			/*
+			 * The microcode has been removed from the device tree
+			 * in the build system. In that case it will have
+			 * already been updated in car_init().
+			 */
+			debug("%s: Microcode data not available\n", __func__);
+			skipped++;
+			continue;
+		}
 		if (ret) {
 			debug("%s: Unable to decode update: %d\n", __func__,
 			      ret);
@@ -158,7 +166,8 @@ int microcode_update_intel(void)
 			skipped++;
 			continue;
 		}
-		wrmsr(MSR_IA32_UCODE_WRITE, (ulong)update.data, 0);
+		address = (ulong)update.data + UCODE_HEADER_LEN;
+		wrmsr(MSR_IA32_UCODE_WRITE, address, 0);
 		rev = microcode_read_rev();
 		debug("microcode: updated to revision 0x%x date=%04x-%02x-%02x\n",
 		      rev, update.date_code & 0xffff,
@@ -169,5 +178,9 @@ int microcode_update_intel(void)
 			return -EFAULT;
 		}
 		count++;
+		if (!ucode_base) {
+			ucode_base = (ulong)update.data;
+			ucode_size = update.size;
+		}
 	} while (1);
 }

@@ -1,9 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (c) 2011 The Chromium OS Authors.
  * (C) Copyright 2008
  * Graeme Russ, graeme.russ@gmail.com.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -15,8 +14,6 @@
 
 #include <configs/x86-common.h>
 #include <configs/x86-chromebook.h>
-
-#undef CONFIG_CFB_CONSOLE
 
 #undef CONFIG_STD_DEVICES_SETTINGS
 #define CONFIG_STD_DEVICES_SETTINGS     "stdin=usbkbd,i8042-kbd,serial\0" \

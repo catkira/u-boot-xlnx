@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2015-2016 Masahiro Yamada <yamada.masahiro@socionext.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2016-2017 Socionext Inc.
  */
 
 #include <linux/io.h>
@@ -9,11 +8,13 @@
 #include "../init.h"
 #include "sbc-regs.h"
 
-int uniphier_pxs2_sbc_init(const struct uniphier_board_data *bd)
+void uniphier_pxs2_sbc_init(void)
 {
+	uniphier_sbc_init_savepin();
+
 	/* necessary for ROM boot ?? */
 	/* system bus output enable */
 	writel(0x17, PC0CTRL);
 
-	return 0;
+	uniphier_pin_init("system-bus");	/* PXs3 */
 }

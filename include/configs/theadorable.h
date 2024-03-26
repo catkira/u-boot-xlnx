@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2015-2016 Stefan Roese <sr@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _CONFIG_THEADORABLE_H
@@ -10,30 +9,23 @@
 /*
  * High Level Configuration Options (easy to change)
  */
-#define CONFIG_DISPLAY_BOARDINFO_LATE
 
 /*
  * TEXT_BASE needs to be below 16MiB, since this area is scrubbed
  * for DDR ECC byte filling in the SPL before loading the main
  * U-Boot into it.
  */
-#define	CONFIG_SYS_TEXT_BASE	0x00800000
 #define CONFIG_SYS_TCLK		250000000	/* 250MHz */
 
 /*
  * Commands configuration
  */
-#define CONFIG_CMD_ENV
-#define CONFIG_CMD_SATA
 
 /*
  * The debugging version enables USB support via defconfig.
  * This version should also enable all other non-production
  * interfaces / features.
  */
-#ifdef CONFIG_USB
-#define CONFIG_CMD_PCI
-#endif
 
 /* I2C */
 #define CONFIG_SYS_I2C
@@ -47,24 +39,18 @@
 #define CONFIG_EHCI_IS_TDI
 #define CONFIG_USB_MAX_CONTROLLER_COUNT 3
 
-#define CONFIG_SYS_NO_FLASH		/* Declare no flash (NOR/SPI) */
-
 /* SPI NOR flash default params, used by sf commands */
 #define CONFIG_SF_DEFAULT_SPEED		27777777 /* for fast SPL booting */
 #define CONFIG_SF_DEFAULT_MODE		SPI_MODE_3
 
 /* Environment in SPI NOR flash */
-#define CONFIG_ENV_IS_IN_SPI_FLASH
 #define CONFIG_ENV_OFFSET		(1 << 20) /* 1MiB in */
 #define CONFIG_ENV_SIZE			(64 << 10) /* 64KiB */
 #define CONFIG_ENV_SECT_SIZE		(256 << 10) /* 256KiB sectors */
 #define CONFIG_ENV_OVERWRITE
 
-#define CONFIG_PHY_MARVELL		/* there is a marvell phy */
 #define PHY_ANEG_TIMEOUT	8000	/* PHY needs a longer aneg time */
 
-#define CONFIG_SYS_CONSOLE_INFO_QUIET	/* don't print console @ startup */
-#define CONFIG_SYS_ALT_MEMTEST
 #define CONFIG_PREBOOT
 
 /* Keep device tree and initrd in lower memory so the kernel can access them */
@@ -74,43 +60,24 @@
 
 /* SATA support */
 #define CONFIG_SYS_SATA_MAX_DEVICE	1
-#define CONFIG_SATA_MV
-#define CONFIG_LIBATA
 #define CONFIG_LBA48
-#define CONFIG_EFI_PARTITION
-#define CONFIG_DOS_PARTITION
-
-/* Additional FS support/configuration */
-#define CONFIG_SUPPORT_VFAT
 
 /* PCIe support */
 #ifdef CONFIG_CMD_PCI
 #ifndef CONFIG_SPL_BUILD
-#define CONFIG_PCI
 #define CONFIG_PCI_MVEBU
-#define CONFIG_PCI_PNP
-#define CONFIG_BOARD_LATE_INIT		/* for PEX switch test */
 #endif
 #endif
 
 /* Enable LCD and reserve 512KB from top of memory*/
 #define CONFIG_SYS_MEM_TOP_HIDE		0x80000
 
-#define CONFIG_VIDEO
-#define CONFIG_CFB_CONSOLE
-#define CONFIG_VGA_AS_SINGLE_DEVICE
-#define CONFIG_CMD_BMP
-
 /* FPGA programming support */
-#define CONFIG_FPGA
-#define CONFIG_FPGA_ALTERA
 #define CONFIG_FPGA_STRATIX_V
 
 /*
  * Bootcounter
  */
-#define CONFIG_BOOTCOUNT_LIMIT
-#define CONFIG_BOOTCOUNT_RAM
 /* Max size of RAM minus BOOTCOUNT_ADDR is the bootcounter address */
 #define BOOTCOUNT_ADDR			0x1000
 
@@ -135,7 +102,6 @@
 
 /* SPL */
 /* Defines for SPL */
-#define CONFIG_SPL_FRAMEWORK
 #define CONFIG_SPL_TEXT_BASE		0x40004030
 #define CONFIG_SPL_MAX_SIZE		((128 << 10) - 0x4030)
 
@@ -149,17 +115,7 @@
 #define CONFIG_SPL_STACK		(0x40000000 + ((192 - 16) << 10))
 #define CONFIG_SPL_BOOTROM_SAVE		(CONFIG_SPL_STACK + 4)
 
-#define CONFIG_SPL_LIBCOMMON_SUPPORT
-#define CONFIG_SPL_LIBGENERIC_SUPPORT
-#define CONFIG_SPL_SERIAL_SUPPORT
-#define CONFIG_SPL_I2C_SUPPORT
-
 /* SPL related SPI defines */
-#define CONFIG_SPL_SPI_SUPPORT
-#define CONFIG_SPL_SPI_FLASH_SUPPORT
-#define CONFIG_SPL_SPI_LOAD
-#define CONFIG_SPL_SPI_BUS		0
-#define CONFIG_SPL_SPI_CS		0
 #define CONFIG_SYS_SPI_U_BOOT_OFFS	0x1a000
 #define CONFIG_SYS_U_BOOT_OFFS		CONFIG_SYS_SPI_U_BOOT_OFFS
 

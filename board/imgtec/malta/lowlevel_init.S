@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 2013 Gabor Juhos <juhosg@openwrt.org>
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <config.h>
@@ -28,12 +27,6 @@
 
 	.globl	lowlevel_init
 lowlevel_init:
-	/* disable any L2 cache for now */
-	sync
-	mfc0	t0, CP0_CONFIG, 2
-	ori	t0, t0, 0x1 << 12
-	mtc0	t0, CP0_CONFIG, 2
-
 	/* detect the core card */
 	PTR_LI	t0, CKSEG1ADDR(MALTA_REVISION)
 	lw	t0, 0(t0)

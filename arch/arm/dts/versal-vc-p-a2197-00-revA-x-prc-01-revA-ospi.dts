@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * dts file for Xilinx Versal X-PRC-01 revA (SE1)
+ *
+ * (C) Copyright 2019, Xilinx, Inc.
+ *
+ * Michal Simek <michal.simek@xilinx.com>
+ */
+
+#include "versal-vc-p-a2197-00-revA-x-prc-01-revA.dts"
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	aliases {
+		spi0 = &ospi;
+	};
+};
+
+/* Mutually exclusive */
+&ospi {
+	status = "okay"; /* U97 MT35XU02G */
+	compatible = "xlnx,versal-ospi-1.0", "cadence,qspi", "cdns,qspi-nor";
+	bus-num = <2>;
+	num-cs = <1>;
+	#stream-id-cells = <1>;
+	#address-cells = <1>;
+	#size-cells = <0>;
+	reset-gpios = <&gpio1 0xc GPIO_ACTIVE_HIGH>;
+
+	flash@0 {
+		compatible = "mt35xu02g", "micron,m25p80", "spi-flash";
+		reg = <0>;
+		#address-cells = <0x1>;
+		#size-cells = <0x1>;
+		cdns,read-delay = <0x0>;
+		cdns,tshsl-ns = <0x0>;
+		cdns,tsd2d-ns = <0x0>;
+		cdns,tchsh-ns = <0x1>;
+		cdns,tslch-ns = <0x1>;
+		spi-tx-bus-width = <1>;
+		spi-rx-bus-width = <8>;
+		spi-max-frequency = <20000000>;
+		partition@0 { /* for testing purpose */
+			label = "ospi-fsbl-uboot-boot.bin";
+			reg = <0x0 0x6400000>;
+		};
+		partition@6400000 { /* for testing purpose */
+			label = "ospi-linux";
+			reg = <0x6400000 0x500000>;
+		};
+		partition@6900000 { /* for testing purpose */
+			label = "ospi-device-tree";
+			reg = <0x6900000 0x20000>;
+		};
+		partition@6920000 { /* for testing purpose */
+			label = "ospi-rootfs";
+			reg = <0x6920000 0xa00000>;
+		};
+		partition@7f40000 {
+			label = "ospi-bootenv";
+			reg = <0x7f40000 0x40000>;
+		};
+	};
+
+};
+
+&qspi {
+	status = "disabled";
+};
+
+&lpd_dma_chan0 {
+	status = "okay";
+};
+
+&lpd_dma_chan1 {
+	status = "okay";
+};
+
+&lpd_dma_chan2 {
+	status = "okay";
+};
+
+&lpd_dma_chan3 {
+	status = "okay";
+};
+
+&lpd_dma_chan4 {
+	status = "okay";
+};
+
+&lpd_dma_chan5 {
+	status = "okay";
+};
+
+&lpd_dma_chan6 {
+	status = "okay";
+};
+
+&lpd_dma_chan7 {
+	status = "okay";
+};

@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2016, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <asm/acpi/statdef.asl>
@@ -22,6 +21,9 @@ Method(_WAK, 1)
 	Return (Package() {0, 0})
 }
 
+/* ACPI global NVS */
+#include "global_nvs.asl"
+
 /* TODO: add CPU ASL support */
 
 Scope (\_SB)
@@ -30,4 +32,4 @@ Scope (\_SB)
 }
 
 /* Chipset specific sleep states */
-#include "sleepstates.asl"
+#include <asm/acpi/sleepstates.asl>

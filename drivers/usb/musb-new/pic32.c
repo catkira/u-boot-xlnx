@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Microchip PIC32 MUSB "glue layer"
  *
  * Copyright (C) 2015, Microchip Technology Inc.
  *  Cristian Birsan <cristian.birsan@microchip.com>
  *  Purna Chandra Mandal <purna.mandal@microchip.com>
- *
- * SPDX-License-Identifier:     GPL-2.0+
  *
  * Based on the dsps "glue layer" code.
  */
@@ -219,7 +218,7 @@ static int musb_usb_probe(struct udevice *dev)
 	struct musb_host_data *mdata = &pdata->mdata;
 	struct fdt_resource mc, glue;
 	void *fdt = (void *)gd->fdt_blob;
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 	void __iomem *mregs;
 	int ret;
 
@@ -252,9 +251,11 @@ static int musb_usb_probe(struct udevice *dev)
 	ret = musb_lowlevel_init(mdata);
 #else
 	pic32_musb_plat.mode = MUSB_PERIPHERAL;
-	ret = musb_register(&pic32_musb_plat, &pdata->dev, mregs);
+	mdata->host = musb_register(&pic32_musb_plat, &pdata->dev, mregs);
+	if (!mdata->host)
+		return -EIO;
 #endif
-	if (ret == 0)
+	if ((ret == 0) && mdata->host)
 		printf("PIC32 MUSB OTG\n");
 
 	return ret;

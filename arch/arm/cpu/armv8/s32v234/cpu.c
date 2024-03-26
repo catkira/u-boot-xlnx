@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2014-2016, Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -11,8 +10,6 @@
 #include <asm/io.h>
 #include <asm/arch/mc_me_regs.h>
 #include "cpu.h"
-
-DECLARE_GLOBAL_DATA_PTR;
 
 u32 cpu_mask(void)
 {
@@ -32,24 +29,28 @@ u32 cpu_mask(void)
 
 static struct mm_region s32v234_mem_map[] = {
 	{
-		.base = S32V234_IRAM_BASE,
+		.virt = S32V234_IRAM_BASE,
+		.phys = S32V234_IRAM_BASE,
 		.size = S32V234_IRAM_SIZE,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
 			 PTE_BLOCK_OUTER_SHARE
 	}, {
-		.base = S32V234_DRAM_BASE1,
+		.virt = S32V234_DRAM_BASE1,
+		.phys = S32V234_DRAM_BASE1,
 		.size = S32V234_DRAM_SIZE1,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
 			 PTE_BLOCK_OUTER_SHARE
 	}, {
-		.base = S32V234_PERIPH_BASE,
+		.virt = S32V234_PERIPH_BASE,
+		.phys = S32V234_PERIPH_BASE,
 		.size = S32V234_PERIPH_SIZE,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
 			 PTE_BLOCK_NON_SHARE
 			 /* TODO: Do we need these? */
 			 /* | PTE_BLOCK_PXN | PTE_BLOCK_UXN */
 	}, {
-		.base = S32V234_DRAM_BASE2,
+		.virt = S32V234_DRAM_BASE2,
+		.phys = S32V234_DRAM_BASE2,
 		.size = S32V234_DRAM_SIZE2,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL_NC) |
 			 PTE_BLOCK_OUTER_SHARE

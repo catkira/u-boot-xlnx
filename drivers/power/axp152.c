@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2012
  * Henrik Nordstrom <henrik@henriknordstrom.net>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <common.h>
 #include <command.h>
@@ -75,7 +74,7 @@ int axp_init(void)
 		return rc;
 
 	if (ver != 0x05)
-		return -1;
+		return -EINVAL;
 
 	return 0;
 }

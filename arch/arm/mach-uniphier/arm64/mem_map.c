@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2016 Masahiro Yamada <yamada.masahiro@socionext.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -10,14 +9,16 @@
 
 static struct mm_region uniphier_mem_map[] = {
 	{
-		.base = 0x00000000,
+		.virt = 0x00000000,
+		.phys = 0x00000000,
 		.size = 0x80000000,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_DEVICE_NGNRNE) |
 			 PTE_BLOCK_NON_SHARE |
 			 PTE_BLOCK_PXN | PTE_BLOCK_UXN
 	},
 	{
-		.base = 0x80000000,
+		.virt = 0x80000000,
+		.phys = 0x80000000,
 		.size = 0xc0000000,
 		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) |
 			 PTE_BLOCK_INNER_SHARE

@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Purna Chandra Mandal <purna.mandal@microchip.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  */
 
@@ -197,8 +196,8 @@ static ulong pic32_set_refclk(struct pic32_clk_priv *priv, int periph,
 	writel(REFO_ON | REFO_OE, reg + _CLR_OFFSET);
 
 	/* wait till previous src change is active */
-	wait_for_bit(__func__, reg, REFO_DIVSW_EN | REFO_ACTIVE,
-		     false, CONFIG_SYS_HZ, false);
+	wait_for_bit_le32(reg, REFO_DIVSW_EN | REFO_ACTIVE,
+			  false, CONFIG_SYS_HZ, false);
 
 	/* parent_id */
 	v = readl(reg);
@@ -223,8 +222,8 @@ static ulong pic32_set_refclk(struct pic32_clk_priv *priv, int periph,
 	writel(REFO_DIVSW_EN, reg + _SET_OFFSET);
 
 	/* wait for divider switching to complete */
-	return wait_for_bit(__func__, reg, REFO_DIVSW_EN, false,
-			    CONFIG_SYS_HZ, false);
+	return wait_for_bit_le32(reg, REFO_DIVSW_EN, false,
+				 CONFIG_SYS_HZ, false);
 }
 
 static ulong pic32_get_refclk(struct pic32_clk_priv *priv, int periph)
@@ -311,8 +310,8 @@ static int pic32_mpll_init(struct pic32_clk_priv *priv)
 
 	/* Wait for ready */
 	mask = MPLL_RDY | MPLL_VREG_RDY;
-	return wait_for_bit(__func__, priv->syscfg_base + CFGMPLL, mask,
-			    true, get_tbclk(), false);
+	return wait_for_bit_le32(priv->syscfg_base + CFGMPLL, mask,
+				 true, get_tbclk(), false);
 }
 
 static void pic32_clk_init(struct udevice *dev)
@@ -330,7 +329,7 @@ static void pic32_clk_init(struct udevice *dev)
 	for (i = REF1CLK; i <= REF5CLK; i++) {
 		snprintf(propname, sizeof(propname),
 			 "microchip,refo%d-frequency", i - REF1CLK + 1);
-		rate = fdtdec_get_int(blob, dev->of_offset, propname, 0);
+		rate = fdtdec_get_int(blob, dev_of_offset(dev), propname, 0);
 		if (rate)
 			pic32_set_refclk(priv, i, pll_hz, rate, ROCLK_SRC_SPLL);
 	}
@@ -393,7 +392,8 @@ static int pic32_clk_probe(struct udevice *dev)
 	fdt_addr_t addr;
 	fdt_size_t size;
 
-	addr = fdtdec_get_addr_size(gd->fdt_blob, dev->of_offset, "reg", &size);
+	addr = fdtdec_get_addr_size(gd->fdt_blob, dev_of_offset(dev), "reg",
+				    &size);
 	if (addr == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
@@ -418,7 +418,6 @@ U_BOOT_DRIVER(pic32_clk) = {
 	.name		= "pic32_clk",
 	.id		= UCLASS_CLK,
 	.of_match	= pic32_clk_ids,
-	.flags		= DM_FLAG_PRE_RELOC,
 	.ops		= &pic32_pic32_clk_ops,
 	.probe		= pic32_clk_probe,
 	.priv_auto_alloc_size = sizeof(struct pic32_clk_priv),

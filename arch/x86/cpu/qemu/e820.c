@@ -1,13 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015 Miao Yan <yanmiaobest@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <asm/e820.h>
 
-unsigned install_e820_map(unsigned max_entries, struct e820entry *entries)
+DECLARE_GLOBAL_DATA_PTR;
+
+unsigned int install_e820_map(unsigned int max_entries,
+			      struct e820_entry *entries)
 {
 	entries[0].addr = 0;
 	entries[0].size = ISA_START_ADDRESS;

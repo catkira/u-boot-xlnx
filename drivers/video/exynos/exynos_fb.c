@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2012 Samsung Electronics
  *
  * Author: InKi Dae <inki.dae@samsung.com>
  * Author: Donghwa Lee <dh09.lee@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
@@ -13,7 +12,7 @@
 #include <div64.h>
 #include <dm.h>
 #include <fdtdec.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 #include <panel.h>
 #include <video.h>
 #include <video_bridge.h>
@@ -27,7 +26,7 @@
 #include <asm/arch/pinmux.h>
 #include <asm/arch/system.h>
 #include <asm/gpio.h>
-#include <asm-generic/errno.h>
+#include <linux/errno.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -383,7 +382,7 @@ void exynos_fimd_lcd_init(struct udevice *dev)
 	unsigned int offset;
 	unsigned int node;
 
-	node = dev->of_offset;
+	node = dev_of_offset(dev);
 	if (fdtdec_get_bool(gd->fdt_blob, node, "samsung,disable-sysmmu"))
 		exynos_fimd_disable_sysmmu();
 
@@ -482,11 +481,11 @@ unsigned long exynos_fimd_calc_fbsize(struct exynos_fb_priv *priv)
 int exynos_fb_ofdata_to_platdata(struct udevice *dev)
 {
 	struct exynos_fb_priv *priv = dev_get_priv(dev);
-	unsigned int node = dev->of_offset;
+	unsigned int node = dev_of_offset(dev);
 	const void *blob = gd->fdt_blob;
 	fdt_addr_t addr;
 
-	addr = dev_get_addr(dev);
+	addr = devfdt_get_addr(dev);
 	if (addr == FDT_ADDR_T_NONE) {
 		debug("Can't get the FIMD base address\n");
 		return -EINVAL;

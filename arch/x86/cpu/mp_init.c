@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Based on code from the coreboot file of the same name
  */
@@ -248,7 +247,8 @@ static int load_sipi_vector(atomic_t **ap_countp, int num_cpus)
 	if (!stack)
 		return -ENOMEM;
 	params->stack_top = (u32)(stack + size);
-#if !defined(CONFIG_QEMU) && !defined(CONFIG_HAVE_FSP)
+#if !defined(CONFIG_QEMU) && !defined(CONFIG_HAVE_FSP) && \
+	!defined(CONFIG_INTEL_MID)
 	params->microcode_ptr = ucode_base;
 	debug("Microcode at %x\n", params->microcode_ptr);
 #endif
@@ -568,7 +568,8 @@ int mp_init_cpu(struct udevice *cpu, void *unused)
 	 * seq num in the uclass_resolve_seq() during device_probe(). To avoid
 	 * this, set req_seq to the reg number in the device tree in advance.
 	 */
-	cpu->req_seq = fdtdec_get_int(gd->fdt_blob, cpu->of_offset, "reg", -1);
+	cpu->req_seq = fdtdec_get_int(gd->fdt_blob, dev_of_offset(cpu), "reg",
+				      -1);
 	plat->ucode_version = microcode_read_rev();
 	plat->device_id = gd->arch.x86_device;
 

@@ -48,10 +48,12 @@ struct cpsw_platform_data {
 	void	(*control)(int enabled);
 	u32	host_port_num;
 	u32	active_slave;
+	bool	rmii_clock_external;
 	u8	version;
 };
 
 int cpsw_register(struct cpsw_platform_data *data);
 int ti_cm_get_macid(struct udevice *dev, int slave, u8 *mac_addr);
+int cpsw_get_slave_phy_addr(struct udevice *dev, int slave);
 
 #endif /* _CPSW_H_  */

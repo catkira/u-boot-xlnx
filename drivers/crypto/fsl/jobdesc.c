@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * SEC Descriptor Construction Library
  * Basic job descriptor construction
  *
  * Copyright 2014 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  */
 
@@ -41,7 +40,7 @@ uint32_t secmem_set_cmd(uint32_t sec_mem_cmd)
 /*!
  * CAAM page allocation:
  * Allocates a partition from secure memory, with the id
- * equal to partion_num. This will de-allocate the page
+ * equal to partition_num. This will de-allocate the page
  * if it is already allocated. The partition will have
  * full access permissions. The permissions are set before,
  * running a job descriptor. A memory page of secure RAM
@@ -204,7 +203,7 @@ void inline_cnstr_jobdesc_hash(uint32_t *desc,
 	append_store(desc, dma_addr_out, storelen,
 		     LDST_CLASS_2_CCB | LDST_SRCDST_BYTE_CONTEXT);
 }
-
+#ifndef CONFIG_SPL_BUILD
 void inline_cnstr_jobdesc_blob_encap(uint32_t *desc, uint8_t *key_idnfr,
 				     uint8_t *plain_txt, uint8_t *enc_blob,
 				     uint32_t in_sz)
@@ -252,12 +251,12 @@ void inline_cnstr_jobdesc_blob_decap(uint32_t *desc, uint8_t *key_idnfr,
 
 	append_operation(desc, OP_TYPE_DECAP_PROTOCOL | OP_PCLID_BLOB);
 }
-
+#endif
 /*
  * Descriptor to instantiate RNG State Handle 0 in normal mode and
  * load the JDKEK, TDKEK and TDSK registers
  */
-void inline_cnstr_jobdesc_rng_instantiation(uint32_t *desc)
+void inline_cnstr_jobdesc_rng_instantiation(uint32_t *desc, int handle)
 {
 	u32 *jump_cmd;
 
@@ -265,21 +264,24 @@ void inline_cnstr_jobdesc_rng_instantiation(uint32_t *desc)
 
 	/* INIT RNG in non-test mode */
 	append_operation(desc, OP_TYPE_CLASS1_ALG | OP_ALG_ALGSEL_RNG |
-			 OP_ALG_AS_INIT);
+			(handle << OP_ALG_AAI_SHIFT) | OP_ALG_AS_INIT);
 
-	/* wait for done */
-	jump_cmd = append_jump(desc, JUMP_CLASS_CLASS1);
-	set_jump_tgt_here(desc, jump_cmd);
+	/* For SH0, Secure Keys must be generated as well */
+	if (handle == 0) {
+		/* wait for done */
+		jump_cmd = append_jump(desc, JUMP_CLASS_CLASS1);
+		set_jump_tgt_here(desc, jump_cmd);
 
-	/*
-	 * load 1 to clear written reg:
-	 * resets the done interrrupt and returns the RNG to idle.
-	 */
-	append_load_imm_u32(desc, 1, LDST_SRCDST_WORD_CLRW);
+		/*
+		 * load 1 to clear written reg:
+		 * resets the done interrupt and returns the RNG to idle.
+		 */
+		append_load_imm_u32(desc, 1, LDST_SRCDST_WORD_CLRW);
 
-	/* generate secure keys (non-test) */
-	append_operation(desc, OP_TYPE_CLASS1_ALG | OP_ALG_ALGSEL_RNG |
-			 OP_ALG_RNG4_SK);
+		/* generate secure keys (non-test) */
+		append_operation(desc, OP_TYPE_CLASS1_ALG | OP_ALG_ALGSEL_RNG |
+				OP_ALG_RNG4_SK);
+	}
 }
 
 /* Change key size to bytes form bits in calling function*/

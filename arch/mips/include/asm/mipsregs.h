@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (C) 1994, 1995, 1996, 1997, 2000, 2001 by Ralf Baechle
  * Copyright (C) 2000 Silicon Graphics, Inc.
@@ -5,8 +6,6 @@
  * Kevin D. Kissell, kevink@mips.com and Carsten Langgaard, carstenl@mips.com
  * Copyright (C) 2000, 07 MIPS Technologies, Inc.
  * Copyright (C) 2003, 2004  Maciej W. Rozycki
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 #ifndef _ASM_MIPSREGS_H
 #define _ASM_MIPSREGS_H
@@ -39,6 +38,7 @@
 #define CP0_ENTRYLO0 $2
 #define CP0_ENTRYLO1 $3
 #define CP0_CONF $3
+#define CP0_GLOBALNUMBER $3, 1
 #define CP0_CONTEXT $4
 #define CP0_PAGEMASK $5
 #define CP0_WIRED $6
@@ -298,6 +298,7 @@
 #define	 STATUSF_IP14		(_ULCAST_(1) <<	 6)
 #define	 STATUSB_IP15		7
 #define	 STATUSF_IP15		(_ULCAST_(1) <<	 7)
+#define ST0_IMPL		(_ULCAST_(3) <<	 16)
 #define ST0_CH			0x00040000
 #define ST0_NMI			0x00080000
 #define ST0_SR			0x00100000
@@ -359,6 +360,11 @@
 #define CAUSEF_TI		(_ULCAST_(1)   << 30)
 #define CAUSEB_BD		31
 #define CAUSEF_BD		(_ULCAST_(1)   << 31)
+
+/*
+ * Bits in the coprocessor 0 EBase register.
+ */
+#define EBASE_CPUNUM		0x3ff
 
 /*
  * Bits in the coprocessor 0 config register.
@@ -450,6 +456,7 @@
 #define MIPS_CONF_MT_FTLB	(_ULCAST_(4) <<  7)
 #define MIPS_CONF_AR		(_ULCAST_(7) << 10)
 #define MIPS_CONF_AT		(_ULCAST_(3) << 13)
+#define MIPS_CONF_IMPL		(_ULCAST_(0x1ff) << 16)
 #define MIPS_CONF_M		(_ULCAST_(1) << 31)
 
 /*
@@ -484,9 +491,13 @@
 #define MIPS_CONF1_TLBS_SIZE    (6)
 #define MIPS_CONF1_TLBS         (_ULCAST_(63) << MIPS_CONF1_TLBS_SHIFT)
 
+#define MIPS_CONF2_SA_SHF	0
 #define MIPS_CONF2_SA		(_ULCAST_(15) << 0)
+#define MIPS_CONF2_SL_SHF	4
 #define MIPS_CONF2_SL		(_ULCAST_(15) << 4)
+#define MIPS_CONF2_SS_SHF	8
 #define MIPS_CONF2_SS		(_ULCAST_(15) << 8)
+#define MIPS_CONF2_L2B		(_ULCAST_(1) << 12)
 #define MIPS_CONF2_SU		(_ULCAST_(15) << 12)
 #define MIPS_CONF2_TA		(_ULCAST_(15) << 16)
 #define MIPS_CONF2_TL		(_ULCAST_(15) << 20)
@@ -548,8 +559,10 @@
 #define MIPS_CONF5_MRP		(_ULCAST_(1) << 3)
 #define MIPS_CONF5_LLB		(_ULCAST_(1) << 4)
 #define MIPS_CONF5_MVH		(_ULCAST_(1) << 5)
+#define MIPS_CONF5_VP		(_ULCAST_(1) << 7)
 #define MIPS_CONF5_FRE		(_ULCAST_(1) << 8)
 #define MIPS_CONF5_UFE		(_ULCAST_(1) << 9)
+#define MIPS_CONF5_L2C		(_ULCAST_(1) << 10)
 #define MIPS_CONF5_MSAEN	(_ULCAST_(1) << 27)
 #define MIPS_CONF5_EVA		(_ULCAST_(1) << 28)
 #define MIPS_CONF5_CV		(_ULCAST_(1) << 29)
@@ -1000,9 +1013,7 @@ do {									\
 #define __read_64bit_c0_split(source, sel)				\
 ({									\
 	unsigned long long __val;					\
-	unsigned long __flags;						\
 									\
-	local_irq_save(__flags);					\
 	if (sel == 0)							\
 		__asm__ __volatile__(					\
 			".set\tmips64\n\t"				\
@@ -1021,16 +1032,12 @@ do {									\
 			"dsra\t%L0, %L0, 32\n\t"			\
 			".set\tmips0"					\
 			: "=r" (__val));				\
-	local_irq_restore(__flags);					\
 									\
 	__val;								\
 })
 
 #define __write_64bit_c0_split(source, sel, val)			\
 do {									\
-	unsigned long __flags;						\
-									\
-	local_irq_save(__flags);					\
 	if (sel == 0)							\
 		__asm__ __volatile__(					\
 			".set\tmips64\n\t"				\
@@ -1051,7 +1058,6 @@ do {									\
 			"dmtc0\t%L0, " #source ", " #sel "\n\t"		\
 			".set\tmips0"					\
 			: : "r" (val));					\
-	local_irq_restore(__flags);					\
 } while (0)
 
 #define __readx_32bit_c0_register(source)				\
@@ -1990,6 +1996,17 @@ __BUILD_SET_C0(brcm_mode)
 static inline unsigned int get_ebase_cpunum(void)
 {
 	return read_c0_ebase() & 0x3ff;
+}
+
+static inline void write_one_tlb(int index, u32 pagemask, u32 hi, u32 low0,
+				 u32 low1)
+{
+	write_c0_entrylo0(low0);
+	write_c0_pagemask(pagemask);
+	write_c0_entrylo1(low1);
+	write_c0_entryhi(hi);
+	write_c0_index(index);
+	tlb_write_indexed();
 }
 
 #endif /* !__ASSEMBLY__ */

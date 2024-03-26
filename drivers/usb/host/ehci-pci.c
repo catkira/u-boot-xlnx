@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*-
  * Copyright (c) 2007-2008, Juniper Networks, Inc.
  * All rights reserved.
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
@@ -10,30 +9,37 @@
 #include <errno.h>
 #include <pci.h>
 #include <usb.h>
+#include <asm/io.h>
 
 #include "ehci.h"
 
 /* Information about a USB port */
 struct ehci_pci_priv {
 	struct ehci_ctrl ehci;
+	struct phy phy;
 };
 
-#ifdef CONFIG_DM_USB
-
-static void ehci_pci_init(struct udevice *dev, struct ehci_hccr **ret_hccr,
+#if CONFIG_IS_ENABLED(DM_USB)
+static int ehci_pci_init(struct udevice *dev, struct ehci_hccr **ret_hccr,
 			  struct ehci_hcor **ret_hcor)
 {
+	struct ehci_pci_priv *priv = dev_get_priv(dev);
 	struct ehci_hccr *hccr;
 	struct ehci_hcor *hcor;
+	int ret;
 	u32 cmd;
+
+	ret = ehci_setup_phy(dev, &priv->phy, 0);
+	if (ret)
+		return ret;
 
 	hccr = (struct ehci_hccr *)dm_pci_map_bar(dev,
 			PCI_BASE_ADDRESS_0, PCI_REGION_MEM);
 	hcor = (struct ehci_hcor *)((uintptr_t) hccr +
 			HC_LENGTH(ehci_readl(&hccr->cr_capbase)));
 
-	debug("EHCI-PCI init hccr 0x%x and hcor 0x%x hc_length %d\n",
-	      (u32)hccr, (u32)hcor,
+	debug("EHCI-PCI init hccr %#lx and hcor %#lx hc_length %d\n",
+	      (ulong)hccr, (ulong)hcor,
 	      (u32)HC_LENGTH(ehci_readl(&hccr->cr_capbase)));
 
 	*ret_hccr = hccr;
@@ -43,6 +49,8 @@ static void ehci_pci_init(struct udevice *dev, struct ehci_hccr **ret_hccr,
 	dm_pci_read_config32(dev, PCI_COMMAND, &cmd);
 	cmd |= PCI_COMMAND_MASTER;
 	dm_pci_write_config32(dev, PCI_COMMAND, cmd);
+
+	return 0;
 }
 
 #else
@@ -113,28 +121,32 @@ int ehci_hcd_stop(int index)
 {
 	return 0;
 }
-#endif /* nCONFIG_DM_USB */
+#endif /* !CONFIG_IS_ENABLED(DM_USB) */
 
-#ifdef CONFIG_DM_USB
+#if CONFIG_IS_ENABLED(DM_USB)
 static int ehci_pci_probe(struct udevice *dev)
 {
 	struct ehci_hccr *hccr;
 	struct ehci_hcor *hcor;
+	int ret;
 
-	ehci_pci_init(dev, &hccr, &hcor);
+	ret = ehci_pci_init(dev, &hccr, &hcor);
+	if (ret)
+		return ret;
 
 	return ehci_register(dev, hccr, hcor, NULL, 0, USB_INIT_HOST);
 }
 
 static int ehci_pci_remove(struct udevice *dev)
 {
+	struct ehci_pci_priv *priv = dev_get_priv(dev);
 	int ret;
 
 	ret = ehci_deregister(dev);
 	if (ret)
 		return ret;
 
-	return 0;
+	return ehci_shutdown_phy(dev, &priv->phy);
 }
 
 static const struct udevice_id ehci_pci_ids[] = {
@@ -161,4 +173,4 @@ static struct pci_device_id ehci_pci_supported[] = {
 
 U_BOOT_PCI_DEVICE(ehci_pci, ehci_pci_supported);
 
-#endif /* CONFIG_DM_USB */
+#endif /* CONFIG_IS_ENABLED(DM_USB) */

@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2010
  * Vipin Kumar, ST Micoelectronics, vipin.kumar@st.com.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _DW_ETH_H
@@ -239,16 +238,33 @@ struct dw_eth_dev {
 #ifdef CONFIG_DM_GPIO
 	struct gpio_desc reset_gpio;
 #endif
+#ifdef CONFIG_CLK
+	struct clk *clocks;	/* clock list */
+	int clock_count;	/* number of clock in clock list */
+#endif
 
 	struct phy_device *phydev;
 	struct mii_dev *bus;
 };
 
 #ifdef CONFIG_DM_ETH
+int designware_eth_ofdata_to_platdata(struct udevice *dev);
+int designware_eth_probe(struct udevice *dev);
+extern const struct eth_ops designware_eth_ops;
+
 struct dw_eth_pdata {
 	struct eth_pdata eth_pdata;
 	u32 reset_delays[3];
 };
+
+int designware_eth_init(struct dw_eth_dev *priv, u8 *enetaddr);
+int designware_eth_enable(struct dw_eth_dev *priv);
+int designware_eth_send(struct udevice *dev, void *packet, int length);
+int designware_eth_recv(struct udevice *dev, int flags, uchar **packetp);
+int designware_eth_free_pkt(struct udevice *dev, uchar *packet,
+				   int length);
+void designware_eth_stop(struct udevice *dev);
+int designware_eth_write_hwaddr(struct udevice *dev);
 #endif
 
 #endif

@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015-2016 Wills Wang <wills.wang@live.com>
- *
- * SPDX-License-Identifier: GPL-2.0+
  */
 
 #include <common.h>
@@ -95,7 +94,7 @@ static int qca953x_pinctrl_get_periph_id(struct udevice *dev,
 	u32 cell[2];
 	int ret;
 
-	ret = fdtdec_get_int_array(gd->fdt_blob, periph->of_offset,
+	ret = fdtdec_get_int_array(gd->fdt_blob, dev_of_offset(periph),
 				   "interrupts", cell, ARRAY_SIZE(cell));
 	if (ret < 0)
 		return -EINVAL;
@@ -131,7 +130,7 @@ static int qca953x_pinctrl_probe(struct udevice *dev)
 	struct qca953x_pinctrl_priv *priv = dev_get_priv(dev);
 	fdt_addr_t addr;
 
-	addr = dev_get_addr(dev);
+	addr = devfdt_get_addr(dev);
 	if (addr == FDT_ADDR_T_NONE)
 		return -EINVAL;
 

@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015 Nathan Rossi <nathan@nathanrossi.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * The following Boot Header format/structures and values are defined in the
  * following documents:
@@ -147,6 +146,12 @@ static int zynqimage_verify_header(unsigned char *ptr, int image_size,
 	if (image_size < sizeof(struct zynq_header))
 		return -1;
 
+	if (zynqhdr->__reserved1 != 0)
+		return -1;
+
+	if (zynqhdr->__reserved2 != 0)
+		return -1;
+
 	if (zynqhdr->width_detection != HEADER_WIDTHDETECTION)
 		return -1;
 	if (zynqhdr->image_identifier != HEADER_IMAGEIDENTIFIER)
@@ -225,16 +230,30 @@ static int zynqimage_check_image_types(uint8_t type)
 static void zynqimage_parse_initparams(struct zynq_header *zynqhdr,
 	const char *filename)
 {
-	/* Expect a table of register-value pairs, e.g. "0x12345678 0x4321" */
-	FILE *fp = fopen(filename, "r");
+	FILE *fp;
 	struct zynq_reginit reginit;
 	unsigned int reg_count = 0;
-	int r;
+	int r, err;
+	struct stat path_stat;
 
+	/* Expect a table of register-value pairs, e.g. "0x12345678 0x4321" */
+	fp = fopen(filename, "r");
 	if (!fp) {
 		fprintf(stderr, "Cannot open initparams file: %s\n", filename);
 		exit(1);
 	}
+
+	err = fstat(fileno(fp), &path_stat);
+	if (err) {
+		fclose(fp);
+		return;
+	}
+
+	if (!S_ISREG(path_stat.st_mode)) {
+		fclose(fp);
+		return;
+	}
+
 	do {
 		r = fscanf(fp, "%x %x", &reginit.address, &reginit.data);
 		if (r == 2) {

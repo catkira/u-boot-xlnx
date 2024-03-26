@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (c) 2012, Google Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -88,14 +87,16 @@ int sandbox_fs_ls(const char *dirname)
 
 	ret = os_dirent_ls(dirname, &head);
 	if (ret)
-		return ret;
+		goto out;
 
 	for (node = head; node; node = node->next) {
 		printf("%s %10lu %s\n", os_dirent_get_typename(node->type),
 		       node->size, node->name);
 	}
+out:
+	os_dirent_free(head);
 
-	return 0;
+	return ret;
 }
 
 int sandbox_fs_exists(const char *filename)

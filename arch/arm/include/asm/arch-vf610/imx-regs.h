@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright 2013-2014 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef __ASM_ARCH_IMX_REGS_H__
@@ -69,6 +68,7 @@
 #define USB_PHY0_BASE_ADDR  (AIPS0_BASE_ADDR + 0x00050800)
 #define USB_PHY1_BASE_ADDR  (AIPS0_BASE_ADDR + 0x00050C00)
 #define SCSC_BASE_ADDR		(AIPS0_BASE_ADDR + 0x00052000)
+#define DCU0_BASE_ADDR		(AIPS0_BASE_ADDR + 0x00058000)
 #define ASRC_BASE_ADDR		(AIPS0_BASE_ADDR + 0x00060000)
 #define SPDIF_BASE_ADDR		(AIPS0_BASE_ADDR + 0x00061000)
 #define ESAI_BASE_ADDR		(AIPS0_BASE_ADDR + 0x00062000)
@@ -98,6 +98,7 @@
 #define USBC1_BASE_ADDR     (AIPS1_BASE_ADDR + 0x00034000)
 #define ENET_BASE_ADDR		(AIPS1_BASE_ADDR + 0x00050000)
 #define ENET1_BASE_ADDR		(AIPS1_BASE_ADDR + 0x00051000)
+#define DCU1_BASE_ADDR		(AIPS1_BASE_ADDR + 0x00058000)
 #define NFC_BASE_ADDR		(AIPS1_BASE_ADDR + 0x00060000)
 
 #define QSPI0_AMBA_BASE		0x20000000
@@ -199,7 +200,8 @@
 #define DDRMC_CR78_Q_FULLNESS(v)			(((v) & 0x7) << 24)
 #define DDRMC_CR78_BUR_ON_FLY_BIT(v)			((v) & 0xf)
 #define DDRMC_CR79_CTLUPD_AREF(v)			(((v) & 0x1) << 24)
-#define DDRMC_CR82_INT_MASK				0x10000000
+#define DDRMC_CR80_MC_INIT_COMPLETE			(1 << 8)
+#define DDRMC_CR82_INT_MASK				(1 << 28)
 #define DDRMC_CR87_ODT_WR_MAPCS0(v)			((v) << 24)
 #define DDRMC_CR87_ODT_RD_MAPCS0(v)			((v) << 16)
 #define DDRMC_CR88_TODTL_CMD(v)				(((v) & 0x1f) << 16)
@@ -238,7 +240,7 @@
 #define DDRMC_CR132_RDLAT_ADJ(v)			((v) & 0x3f)
 #define DDRMC_CR137_PHYCTL_DL(v)			(((v) & 0xf) << 16)
 #define DDRMC_CR138_PHY_WRLV_MXDL(v)			(((v) & 0xffff) << 16)
-#define DDRMC_CR138_PHYDRAM_CK_EN(v)			(((v) & 0x8) << 8)
+#define DDRMC_CR138_PHYDRAM_CK_EN(v)			(((v) & 0x7) << 8)
 #define DDRMC_CR139_PHY_WRLV_RESPLAT(v)			(((v) & 0xff) << 24)
 #define DDRMC_CR139_PHY_WRLV_LOAD(v)			(((v) & 0xff) << 16)
 #define DDRMC_CR139_PHY_WRLV_DLL(v)			(((v) & 0xff) << 8)
@@ -427,34 +429,6 @@ struct fuse_bank4_regs {
 	u32 rsvd6[3];
 	u32 gp2;
 	u32 rsvd7[3];
-};
-
-/* UART */
-struct lpuart_fsl {
-	u8 ubdh;
-	u8 ubdl;
-	u8 uc1;
-	u8 uc2;
-	u8 us1;
-	u8 us2;
-	u8 uc3;
-	u8 ud;
-	u8 uma1;
-	u8 uma2;
-	u8 uc4;
-	u8 uc5;
-	u8 ued;
-	u8 umodem;
-	u8 uir;
-	u8 reserved;
-	u8 upfifo;
-	u8 ucfifo;
-	u8 usfifo;
-	u8 utwfifo;
-	u8 utcfifo;
-	u8 urwfifo;
-	u8 urcfifo;
-	u8 rsvd[28];
 };
 
 /* MSCM Interrupt Router */

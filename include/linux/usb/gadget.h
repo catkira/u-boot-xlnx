@@ -19,6 +19,7 @@
 #define __LINUX_USB_GADGET_H
 
 #include <errno.h>
+#include <usb.h>
 #include <linux/compat.h>
 #include <linux/list.h>
 
@@ -566,6 +567,15 @@ static inline int gadget_is_otg(struct usb_gadget *g)
 }
 
 /**
+ * gadget_is_superspeed() - return true if the hardware handles superspeed
+ * @g: controller that might support superspeed
+ */
+static inline int gadget_is_superspeed(struct usb_gadget *g)
+{
+	return g->max_speed >= USB_SPEED_SUPER;
+}
+
+/**
  * usb_gadget_frame_number - returns the current frame number
  * @gadget: controller that reports the frame number
  *
@@ -925,5 +935,22 @@ extern struct usb_ep *usb_ep_autoconfig(struct usb_gadget *,
 extern void usb_ep_autoconfig_reset(struct usb_gadget *);
 
 extern int usb_gadget_handle_interrupts(int index);
+
+#if CONFIG_IS_ENABLED(DM_USB_GADGET)
+int usb_gadget_initialize(int index);
+int usb_gadget_release(int index);
+int dm_usb_gadget_handle_interrupts(struct udevice *dev);
+#else
+#include <usb.h>
+static inline int usb_gadget_initialize(int index)
+{
+	return board_usb_init(index, USB_INIT_DEVICE);
+}
+
+static inline int usb_gadget_release(int index)
+{
+	return board_usb_cleanup(index, USB_INIT_DEVICE);
+}
+#endif
 
 #endif	/* __LINUX_USB_GADGET_H */

@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2014
  * Texas Instruments, <www.ti.com>
  *
  * Dan Murphy <dmurphy@ti.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * FAT Image Functions copied from spl_mmc.c
  */
@@ -15,11 +14,10 @@
 #include <fat.h>
 #include <errno.h>
 #include <image.h>
-#include <libfdt.h>
+#include <linux/libfdt.h>
 
 static int fat_registered;
 
-#ifdef CONFIG_SPL_FAT_SUPPORT
 static int spl_register_fat_device(struct blk_desc *block_dev, int partition)
 {
 	int err = 0;
@@ -54,9 +52,9 @@ static ulong spl_fit_read(struct spl_load_info *load, ulong file_offset,
 	return actread;
 }
 
-int spl_load_image_fat(struct blk_desc *block_dev,
-						int partition,
-						const char *filename)
+int spl_load_image_fat(struct spl_image_info *spl_image,
+		       struct blk_desc *block_dev, int partition,
+		       const char *filename)
 {
 	int err;
 	struct image_header *header;
@@ -65,14 +63,24 @@ int spl_load_image_fat(struct blk_desc *block_dev,
 	if (err)
 		goto end;
 
-	header = (struct image_header *)(CONFIG_SYS_TEXT_BASE -
-						sizeof(struct image_header));
+	header = spl_get_load_buffer(-sizeof(*header), sizeof(*header));
 
 	err = file_fat_read(filename, header, sizeof(struct image_header));
 	if (err <= 0)
 		goto end;
 
-	if (IS_ENABLED(CONFIG_SPL_LOAD_FIT) &&
+	if (IS_ENABLED(CONFIG_SPL_LOAD_FIT_FULL) &&
+	    image_get_magic(header) == FDT_MAGIC) {
+		err = file_fat_read(filename, (void *)CONFIG_SYS_LOAD_ADDR, 0);
+		if (err <= 0)
+			goto end;
+		err = spl_parse_image_header(spl_image,
+				(struct image_header *)CONFIG_SYS_LOAD_ADDR);
+		if (err == -EAGAIN)
+			return err;
+		if (err == 0)
+			err = 1;
+	} else if (IS_ENABLED(CONFIG_SPL_LOAD_FIT) &&
 	    image_get_magic(header) == FDT_MAGIC) {
 		struct spl_load_info load;
 
@@ -82,14 +90,14 @@ int spl_load_image_fat(struct blk_desc *block_dev,
 		load.filename = (void *)filename;
 		load.priv = NULL;
 
-		return spl_load_simple_fit(&load, 0, header);
+		return spl_load_simple_fit(spl_image, &load, 0, header);
 	} else {
-		err = spl_parse_image_header(header);
+		err = spl_parse_image_header(spl_image, header);
 		if (err)
 			goto end;
 
 		err = file_fat_read(filename,
-				    (u8 *)(uintptr_t)spl_image.load_addr, 0);
+				    (u8 *)(uintptr_t)spl_image->load_addr, 0);
 	}
 
 end:
@@ -103,7 +111,8 @@ end:
 }
 
 #ifdef CONFIG_SPL_OS_BOOT
-int spl_load_image_fat_os(struct blk_desc *block_dev, int partition)
+int spl_load_image_fat_os(struct spl_image_info *spl_image,
+			  struct blk_desc *block_dev, int partition)
 {
 	int err;
 	__maybe_unused char *file;
@@ -113,7 +122,7 @@ int spl_load_image_fat_os(struct blk_desc *block_dev, int partition)
 		return err;
 
 #if defined(CONFIG_SPL_ENV_SUPPORT) && defined(CONFIG_SPL_OS_BOOT)
-	file = getenv("falcon_args_file");
+	file = env_get("falcon_args_file");
 	if (file) {
 		err = file_fat_read(file, (void *)CONFIG_SYS_SPL_ARGS_ADDR, 0);
 		if (err <= 0) {
@@ -121,9 +130,10 @@ int spl_load_image_fat_os(struct blk_desc *block_dev, int partition)
 			       file, err);
 			goto defaults;
 		}
-		file = getenv("falcon_image_file");
+		file = env_get("falcon_image_file");
 		if (file) {
-			err = spl_load_image_fat(block_dev, partition, file);
+			err = spl_load_image_fat(spl_image, block_dev,
+						 partition, file);
 			if (err != 0) {
 				puts("spl: falling back to default\n");
 				goto defaults;
@@ -148,13 +158,13 @@ defaults:
 		return -1;
 	}
 
-	return spl_load_image_fat(block_dev, partition,
+	return spl_load_image_fat(spl_image, block_dev, partition,
 			CONFIG_SPL_FS_LOAD_KERNEL_NAME);
 }
 #else
-int spl_load_image_fat_os(struct blk_desc *block_dev, int partition)
+int spl_load_image_fat_os(struct spl_image_info *spl_image,
+			  struct blk_desc *block_dev, int partition)
 {
 	return -ENOSYS;
 }
-#endif
 #endif

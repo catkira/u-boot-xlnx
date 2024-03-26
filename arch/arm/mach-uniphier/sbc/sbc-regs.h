@@ -1,9 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * UniPhier SBC (System Bus Controller) registers
  *
- * Copyright (C) 2011-2015 Masahiro Yamada <yamada.masahiro@socionext.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Copyright (C) 2011-2014 Panasonic Corporation
+ * Copyright (C) 2015-2016 Socionext Inc.
  */
 
 #ifndef ARCH_SBC_REGS_H
@@ -75,7 +75,6 @@
 #define	SBCTRL74		(SBCTRL_BASE + 0x170)
 
 #define PC0CTRL				0x598000c0
-#define ROM_BOOT_ROMRSV2		0x59801208
 
 #ifndef __ASSEMBLY__
 #include <linux/io.h>
