@@ -269,6 +269,20 @@
 		"fi; \0" \
 	"refclk_source=internal\0" \
 	"mode=2r2t\0" \
+	"tx_frequency_int=978000000\0" \
+	"tx_gain_int=-3\0" \
+	"loadvals_skynet=if test -n \"${tx_frequency}\" && test ! \"${tx_frequency}\" = \"${tx_frequency_int}\" ; then " \
+			"setenv tx_frequency_int ${tx_frequency}; " \
+			"env delete tx_frequency; " \
+			"echo storing new tx_frequency in env ...; " \
+			"saveenv; " \
+		"fi; " \
+		"if test -n \"${tx_gain}\" && test ! \"${tx_gain}\" = \"${tx_gain_int}\" ; then " \
+			"setenv tx_gain_int ${tx_gain}; " \
+			"env delete tx_gain; " \
+			"echo storing new tx_gain in env ...; " \
+			"saveenv; " \
+		"fi; \0" \
 	"adi_loadvals_pluto=if test -n \"${ad936x_ext_refclk}\" && test ! -n \"${ad936x_skip_ext_refclk}\"; then " \
 			"fdt set /clocks/clock@0 clock-frequency ${ad936x_ext_refclk}; " \
 		"fi; " \
@@ -363,6 +377,7 @@
 		"fi\0" \
 	"sdboot=if mmcinfo; then " \
 			"run uenvboot; " \
+			"run loadvals_skynet; " \
 			"itest *f8000258 == 480003 && run clear_reset_cause && run dfu_sf; " \
 			"itest *f8000258 == 480007 && run clear_reset_cause && run ramboot_verbose; " \
 			"echo Starting Linux from SD... && " \
