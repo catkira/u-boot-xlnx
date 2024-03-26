@@ -271,15 +271,31 @@
 	"mode=2r2t\0" \
 	"tx_frequency_int=978000000\0" \
 	"tx_gain_int=-3\0" \
+	"uenv_version_int=0\0" \
+	"check_uenv_version=if test -n \"${uenv_version}\" && test ! \"${uenv_version}\" = \"${uenv_version_int}\" ; then " \
+			"echo upgrade detected, loading default env ...;" \
+			"env export -t 0x10000000 uenv_version; " \
+			"env default -a -f; " \
+			"env import -t 0x10000000 20; " \
+			"setenv uenv_version_int ${uenv_version}; " \
+			"env delete tx_frequency; " \
+			"env delete tx_gain; " \
+			"env delete uenv_version; " \
+			"saveenv; " \
+		"fi; \0" \
 	"loadvals_skynet=if test -n \"${tx_frequency}\" && test ! \"${tx_frequency}\" = \"${tx_frequency_int}\" ; then " \
 			"setenv tx_frequency_int ${tx_frequency}; " \
 			"env delete tx_frequency; " \
+			"env delete tx_gain; " \
+			"env delete uenv_version; " \
 			"echo storing new tx_frequency in env ...; " \
 			"saveenv; " \
 		"fi; " \
 		"if test -n \"${tx_gain}\" && test ! \"${tx_gain}\" = \"${tx_gain_int}\" ; then " \
 			"setenv tx_gain_int ${tx_gain}; " \
+			"env delete tx_frequency; " \
 			"env delete tx_gain; " \
+			"env delete uenv_version; " \
 			"echo storing new tx_gain in env ...; " \
 			"saveenv; " \
 		"fi; \0" \
@@ -377,6 +393,7 @@
 		"fi\0" \
 	"sdboot=if mmcinfo; then " \
 			"run uenvboot; " \
+			"run check_uenv_version; " \
 			"run loadvals_skynet; " \
 			"itest *f8000258 == 480003 && run clear_reset_cause && run dfu_sf; " \
 			"itest *f8000258 == 480007 && run clear_reset_cause && run ramboot_verbose; " \
