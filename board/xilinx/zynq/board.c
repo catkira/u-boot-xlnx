@@ -90,20 +90,26 @@ int board_init(void)
 
 int board_late_init(void)
 {
-	unsigned mode = (zynq_slcr_get_boot_mode()) & ZYNQ_BM_MASK;
-
-	static const char* const modes[] = {
-		[ZYNQ_BM_QSPI] = "qspiboot",
-		[ZYNQ_BM_NAND] = "nandboot",
-		[ZYNQ_BM_NOR] = "norboot",
-		[ZYNQ_BM_SD] = "sdboot",
-		[ZYNQ_BM_JTAG] = "jtagboot"
-	};
-
-	if (mode >= ARRAY_SIZE(modes) || !modes[mode])
+	switch ((zynq_slcr_get_boot_mode()) & ZYNQ_BM_MASK) {
+	case ZYNQ_BM_QSPI:
+		setenv("modeboot", "qspiboot");
+		break;
+	case ZYNQ_BM_NAND:
+		setenv("modeboot", "nandboot");
+		break;
+	case ZYNQ_BM_NOR:
+		setenv("modeboot", "norboot");
+		break;
+	case ZYNQ_BM_SD:
+		setenv("modeboot", "sdboot");
+		break;
+	case ZYNQ_BM_JTAG:
+		setenv("modeboot", "jtagboot");
+		break;
+	default:
 		setenv("modeboot", "");
-	else
-		setenv("modeboot", modes[mode]);
+		break;
+	}
 
 	return 0;
 }
