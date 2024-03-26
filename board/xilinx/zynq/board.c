@@ -114,23 +114,6 @@ int board_late_init(void)
 	return 0;
 }
 
-#ifdef CONFIG_MISC_INIT_R
-#include <asm/gpio.h>
-#include <environment.h>
-int misc_init_r(void)
-{
-#define BUTTON_GPIO 14
-
-	gpio_request(BUTTON_GPIO, "SWITCH");
-	gpio_direction_input(BUTTON_GPIO);
-
-	if (!gpio_get_value(BUTTON_GPIO))
-		set_default_env("Button pressed: Using default environment\n");
-
-	return 0;
-}
-#endif
-
 #ifdef CONFIG_DISPLAY_BOARDINFO
 int checkboard(void)
 {
