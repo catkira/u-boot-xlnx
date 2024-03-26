@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2009-2012 Freescale Semiconductor, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -97,7 +96,7 @@ void cpu_init_early_f(void *fdt)
 
 	/* gd area was zeroed during startup */
 
-#ifdef CONFIG_QEMU_E500
+#ifdef CONFIG_ARCH_QEMU_E500
 	/*
 	 * CONFIG_SYS_CCSRBAR_PHYS below may use gd->fdt_blob on ePAPR systems,
 	 * so we need to populate it before it accesses it.

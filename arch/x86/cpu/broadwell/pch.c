@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
@@ -190,14 +189,14 @@ static int pch_power_options(struct udevice *dev)
 	debug("Set power %s after power failure.\n", state);
 
 	/* GPE setup based on device tree configuration */
-	ret = fdtdec_get_int_array(gd->fdt_blob, dev->of_offset,
+	ret = fdtdec_get_int_array(gd->fdt_blob, dev_of_offset(dev),
 				   "intel,gpe0-en", enable, ARRAY_SIZE(enable));
 	if (ret)
 		return -EINVAL;
 	enable_all_gpe(enable[0], enable[1], enable[2], enable[3]);
 
 	/* SMI setup based on device tree configuration */
-	enable_alt_smi(dev, fdtdec_get_int(gd->fdt_blob, dev->of_offset,
+	enable_alt_smi(dev, fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev),
 					   "intel,alt-gp-smi-enable", 0));
 
 	return 0;

@@ -1,23 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
 #include <i2c.h>
 #include <fdt_support.h>
+#include <fsl_ddr_sdram.h>
 #include <asm/io.h>
 #include <asm/arch/clock.h>
 #include <asm/arch/fsl_serdes.h>
+#include <asm/arch/ppa.h>
 #include <asm/arch/fdt.h>
+#include <asm/arch/mmu.h>
+#include <asm/arch/cpu.h>
 #include <asm/arch/soc.h>
+#include <asm/arch-fsl-layerscape/fsl_icid.h>
 #include <ahci.h>
 #include <hwconfig.h>
 #include <mmc.h>
 #include <scsi.h>
 #include <fm_eth.h>
-#include <fsl_csu.h>
 #include <fsl_esdhc.h>
 #include <fsl_ifc.h>
 #include <spl.h>
@@ -44,14 +47,147 @@ enum {
 #define CFG_UART_MUX_SHIFT	1
 #define CFG_LPUART_EN		0x1
 
+#ifdef CONFIG_TFABOOT
+struct ifc_regs ifc_cfg_nor_boot[CONFIG_SYS_FSL_IFC_BANK_COUNT] = {
+	{
+		"nor0",
+		CONFIG_SYS_NOR0_CSPR,
+		CONFIG_SYS_NOR0_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+
+	},
+	{
+		"nor1",
+		CONFIG_SYS_NOR1_CSPR,
+		CONFIG_SYS_NOR1_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+	},
+	{
+		"nand",
+		CONFIG_SYS_NAND_CSPR,
+		CONFIG_SYS_NAND_CSPR_EXT,
+		CONFIG_SYS_NAND_AMASK,
+		CONFIG_SYS_NAND_CSOR,
+		{
+			CONFIG_SYS_NAND_FTIM0,
+			CONFIG_SYS_NAND_FTIM1,
+			CONFIG_SYS_NAND_FTIM2,
+			CONFIG_SYS_NAND_FTIM3
+		},
+	},
+	{
+		"fpga",
+		CONFIG_SYS_FPGA_CSPR,
+		CONFIG_SYS_FPGA_CSPR_EXT,
+		CONFIG_SYS_FPGA_AMASK,
+		CONFIG_SYS_FPGA_CSOR,
+		{
+			CONFIG_SYS_FPGA_FTIM0,
+			CONFIG_SYS_FPGA_FTIM1,
+			CONFIG_SYS_FPGA_FTIM2,
+			CONFIG_SYS_FPGA_FTIM3
+		},
+	}
+};
+
+struct ifc_regs ifc_cfg_nand_boot[CONFIG_SYS_FSL_IFC_BANK_COUNT] = {
+	{
+		"nand",
+		CONFIG_SYS_NAND_CSPR,
+		CONFIG_SYS_NAND_CSPR_EXT,
+		CONFIG_SYS_NAND_AMASK,
+		CONFIG_SYS_NAND_CSOR,
+		{
+			CONFIG_SYS_NAND_FTIM0,
+			CONFIG_SYS_NAND_FTIM1,
+			CONFIG_SYS_NAND_FTIM2,
+			CONFIG_SYS_NAND_FTIM3
+		},
+	},
+	{
+		"nor0",
+		CONFIG_SYS_NOR0_CSPR,
+		CONFIG_SYS_NOR0_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+	},
+	{
+		"nor1",
+		CONFIG_SYS_NOR1_CSPR,
+		CONFIG_SYS_NOR1_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+	},
+	{
+		"fpga",
+		CONFIG_SYS_FPGA_CSPR,
+		CONFIG_SYS_FPGA_CSPR_EXT,
+		CONFIG_SYS_FPGA_AMASK,
+		CONFIG_SYS_FPGA_CSOR,
+		{
+			CONFIG_SYS_FPGA_FTIM0,
+			CONFIG_SYS_FPGA_FTIM1,
+			CONFIG_SYS_FPGA_FTIM2,
+			CONFIG_SYS_FPGA_FTIM3
+		},
+	}
+};
+
+void ifc_cfg_boot_info(struct ifc_regs_info *regs_info)
+{
+	enum boot_src src = get_boot_src();
+
+	if (src == BOOT_SOURCE_IFC_NAND)
+		regs_info->regs = ifc_cfg_nand_boot;
+	else
+		regs_info->regs = ifc_cfg_nor_boot;
+	regs_info->cs_size = CONFIG_SYS_FSL_IFC_BANK_COUNT;
+}
+#endif
+
 int checkboard(void)
 {
+#ifdef CONFIG_TFABOOT
+	enum boot_src src = get_boot_src();
+#endif
 	char buf[64];
 #ifndef CONFIG_SD_BOOT
 	u8 sw;
 #endif
 
 	puts("Board: LS1043AQDS, boot from ");
+
+#ifdef CONFIG_TFABOOT
+	if (src == BOOT_SOURCE_SD_MMC)
+		puts("SD\n");
+	else {
+#endif
 
 #ifdef CONFIG_SD_BOOT
 	puts("SD\n");
@@ -71,6 +207,9 @@ int checkboard(void)
 		printf("invalid setting of SW%u\n", QIXIS_LBMAP_SWITCH);
 #endif
 
+#ifdef CONFIG_TFABOOT
+	}
+#endif
 	printf("Sys ID: 0x%02x, Sys Ver: 0x%02x\n",
 	       QIXIS_READ(id), QIXIS_READ(arch));
 
@@ -153,7 +292,12 @@ int dram_init(void)
 	 * before accessing DDR SPD.
 	 */
 	select_i2c_ch_pca9547(I2C_MUX_CH_DEFAULT);
-	gd->ram_size = initdram(0);
+	fsl_initdram();
+#if (!defined(CONFIG_SPL) && !defined(CONFIG_TFABOOT)) || \
+	defined(CONFIG_SPL_BUILD)
+	/* This will break-before-make MMU for DDR */
+	update_early_mmu_table();
+#endif
 
 	return 0;
 }
@@ -309,6 +453,10 @@ int misc_init_r(void)
 
 int board_init(void)
 {
+#ifdef CONFIG_SYS_FSL_ERRATUM_A010315
+	erratum_a010315();
+#endif
+
 	select_i2c_ch_pca9547(I2C_MUX_CH_DEFAULT);
 	board_retimer_init();
 
@@ -316,9 +464,10 @@ int board_init(void)
 	config_serdes_mux();
 #endif
 
-#ifdef CONFIG_LAYERSCAPE_NS_ACCESS
-	enable_layerscape_ns_access();
+#ifdef CONFIG_FSL_LS_PPA
+	ppa_init();
 #endif
+
 	return 0;
 }
 
@@ -327,6 +476,7 @@ int ft_board_setup(void *blob, bd_t *bd)
 {
 	u64 base[CONFIG_NR_DRAM_BANKS];
 	u64 size[CONFIG_NR_DRAM_BANKS];
+	u8 reg;
 
 	/* fixup DT for the two DDR banks */
 	base[0] = gd->bd->bi_dram[0].start;
@@ -341,6 +491,17 @@ int ft_board_setup(void *blob, bd_t *bd)
 	fdt_fixup_fman_ethernet(blob);
 	fdt_fixup_board_enet(blob);
 #endif
+
+	fdt_fixup_icid(blob);
+
+	reg = QIXIS_READ(brdcfg[0]);
+	reg = (reg & QIXIS_LBMAP_MASK) >> QIXIS_LBMAP_SHIFT;
+
+	/* Disable IFC if QSPI is enabled */
+	if (reg == 0xF)
+		do_fixup_by_compat(blob, "fsl,ifc",
+				   "status", "disabled", 8 + 1, 1);
+
 	return 0;
 }
 #endif
@@ -363,3 +524,10 @@ u16 flash_read16(void *addr)
 
 	return (((val) >> 8) & 0x00ff) | (((val) << 8) & 0xff00);
 }
+
+#ifdef CONFIG_TFABOOT
+void *env_sf_get_env_addr(void)
+{
+	return (void *)(CONFIG_SYS_FSL_QSPI_BASE + CONFIG_ENV_OFFSET);
+}
+#endif

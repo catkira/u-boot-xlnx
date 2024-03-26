@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2012 Freescale Semiconductor, Inc.
  * Author: Sandeep Kumar Singh <sandeep@freescale.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /* This file is based on board/freescale/corenet_ds/eth_superhydra.c */
@@ -213,7 +212,7 @@ int board_eth_init(bd_t *bis)
 		fm_info_set_phy_address(FM1_DTSEC6,
 				CONFIG_SYS_FM1_ONBOARD_PHY2_ADDR);
 		break;
-#ifdef CONFIG_PPC_B4420
+#ifdef CONFIG_ARCH_B4420
 	case 0x17:
 	case 0x18:
 		/* Serdes 1: A-D SGMII, Configuring on board dual SGMII Phy */

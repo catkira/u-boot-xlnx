@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * AXP221 and AXP223 driver
  *
@@ -6,8 +7,6 @@
  *
  * (C) Copyright 2014 Hans de Goede <hdegoede@redhat.com>
  * (C) Copyright 2013 Oliver Schinagl <oliver@schinagl.nl>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -222,6 +221,18 @@ int axp_init(void)
 
 	if (!(axp_chip_id == 0x6 || axp_chip_id == 0x7 || axp_chip_id == 0x17))
 		return -ENODEV;
+
+	/*
+	 * Turn off LDOIO regulators / tri-state GPIO pins, when rebooting
+	 * from android these are sometimes on.
+	 */
+	ret = pmic_bus_write(AXP_GPIO0_CTRL, AXP_GPIO_CTRL_INPUT);
+	if (ret)
+		return ret;
+
+	ret = pmic_bus_write(AXP_GPIO1_CTRL, AXP_GPIO_CTRL_INPUT);
+	if (ret)
+		return ret;
 
 	return 0;
 }

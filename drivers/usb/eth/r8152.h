@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2015 Realtek Semiconductor Corp. All rights reserved.
- *
- * SPDX-License-Identifier:     GPL-2.0
  *
   */
 
@@ -594,6 +593,10 @@ struct r8152 {
 	u16 ocp_base;
 
 	u8 version;
+
+#ifdef CONFIG_DM_ETH
+	struct ueth_data ueth;
+#endif
 };
 
 int generic_ocp_write(struct r8152 *tp, u16 index, u16 byteen,

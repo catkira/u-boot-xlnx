@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2004, Psyent Corporation <www.psyent.com>
  * Scott McNutt <smcnutt@psyent.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -103,7 +102,7 @@ static int altera_nios2_get_count(struct udevice *dev)
 static int altera_nios2_probe(struct udevice *dev)
 {
 	const void *blob = gd->fdt_blob;
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 
 	gd->cpu_clk = fdtdec_get_int(blob, node,
 		"clock-frequency", 0);
@@ -150,3 +149,9 @@ U_BOOT_DRIVER(altera_nios2) = {
 	.ops		= &altera_nios2_ops,
 	.flags		= DM_FLAG_PRE_RELOC,
 };
+
+/* This is a dummy function on nios2 */
+int dram_init(void)
+{
+	return 0;
+}

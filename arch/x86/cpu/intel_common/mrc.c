@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
@@ -149,7 +148,7 @@ int mrc_locate_spd(struct udevice *dev, int size, const void **spd_datap)
 	spd_index = dm_gpio_get_values_as_int(desc, ret);
 	debug("spd index %d\n", spd_index);
 
-	node = fdt_first_subnode(blob, dev->of_offset);
+	node = fdt_first_subnode(blob, dev_of_offset(dev));
 	if (node < 0)
 		return -EINVAL;
 	for (spd_node = fdt_first_subnode(blob, node);
@@ -242,11 +241,6 @@ static int sdram_initialise(struct udevice *dev, struct udevice *me_dev,
 	debug("System Agent Version %d.%d.%d Build %d\n",
 	      version >> 24 , (version >> 16) & 0xff,
 	      (version >> 8) & 0xff, version & 0xff);
-
-#if CONFIG_USBDEBUG
-	/* mrc.bin reconfigures USB, so reinit it to have debug */
-	early_usbdebug_init();
-#endif
 
 	return 0;
 }

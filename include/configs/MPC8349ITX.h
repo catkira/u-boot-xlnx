@@ -1,7 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) Freescale Semiconductor, Inc. 2006.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -40,8 +39,6 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
-#define CONFIG_DISPLAY_BOARDINFO
-
 #if (CONFIG_SYS_TEXT_BASE == 0xFE000000)
 #define CONFIG_SYS_LOWBOOT
 #endif
@@ -52,14 +49,9 @@
 #define CONFIG_MPC834x		/* MPC834x family (8343, 8347, 8349) */
 #define CONFIG_MPC8349		/* MPC8349 specific */
 
-#ifndef CONFIG_SYS_TEXT_BASE
-#define CONFIG_SYS_TEXT_BASE	0xFEF00000
-#endif
-
 #define CONFIG_SYS_IMMR	0xE0000000	/* The IMMR is relocated to here */
 
 #define CONFIG_MISC_INIT_F
-#define CONFIG_MISC_INIT_R
 
 /*
  * On-board devices
@@ -69,14 +61,11 @@
 /* The CF card interface on the back of the board */
 #define CONFIG_COMPACT_FLASH
 #define CONFIG_VSC7385_ENET	/* VSC7385 ethernet support */
-#define CONFIG_SATA_SIL3114	/* SIL3114 SATA controller */
 #define CONFIG_SYS_USB_HOST	/* use the EHCI USB controller */
 #endif
 
-#define CONFIG_PCI
 #define CONFIG_RTC_DS1337
 #define CONFIG_SYS_I2C
-#define CONFIG_TSEC_ENET		/* TSEC Ethernet support */
 
 /*
  * Device configurations
@@ -142,7 +131,6 @@
 #ifdef CONFIG_SATA_SIL3114
 
 #define CONFIG_SYS_SATA_MAX_DEVICE      4
-#define CONFIG_LIBATA
 #define CONFIG_LBA48
 
 #endif
@@ -151,8 +139,6 @@
 /*
  * Support USB
  */
-#define CONFIG_USB_STORAGE
-#define CONFIG_USB_EHCI
 #define CONFIG_USB_EHCI_FSL
 
 /* Current USB implementation supports the only USB controller,
@@ -200,8 +186,6 @@
  *Flash on the Local Bus
  */
 
-#define CONFIG_SYS_FLASH_CFI		/* use the Common Flash Interface */
-#define CONFIG_FLASH_CFI_DRIVER		/* use the CFI driver */
 #define CONFIG_SYS_FLASH_BASE		0xFE000000	/* start of FLASH   */
 #define CONFIG_SYS_FLASH_EMPTY_INFO
 /* 127 64KB sectors + 8 8KB sectors per device */
@@ -217,7 +201,6 @@ boards, we say we have two, but don't display a message if we find only one. */
 #define CONFIG_SYS_FLASH_BANKS_LIST	\
 		{CONFIG_SYS_FLASH_BASE, CONFIG_SYS_FLASH_BASE + 0x800000}
 #define CONFIG_SYS_FLASH_SIZE		16	/* FLASH size in MB */
-#define CONFIG_SYS_FLASH_PROTECTION	1	/* Use h/w Flash protection. */
 
 /* Vitesse 7385 */
 
@@ -330,7 +313,7 @@ boards, we say we have two, but don't display a message if we find only one. */
 #define CONFIG_SYS_INIT_SP_OFFSET	CONFIG_SYS_GBL_DATA_OFFSET
 
 /* CONFIG_SYS_MONITOR_LEN must be a multiple of CONFIG_ENV_SECT_SIZE */
-#define CONFIG_SYS_MONITOR_LEN	(384 * 1024) /* Reserve 384 kB for Mon */
+#define CONFIG_SYS_MONITOR_LEN	(512 * 1024) /* Reserve 512 kB for Mon */
 #define CONFIG_SYS_MALLOC_LEN	(256 * 1024) /* Reserved for malloc */
 
 /*
@@ -351,7 +334,6 @@ boards, we say we have two, but don't display a message if we find only one. */
 /*
  * Serial Port
  */
-#define CONFIG_CONS_INDEX	1
 #define CONFIG_SYS_NS16550_SERIAL
 #define CONFIG_SYS_NS16550_REG_SIZE	1
 #define CONFIG_SYS_NS16550_CLK		get_bus_freq(0)
@@ -359,8 +341,7 @@ boards, we say we have two, but don't display a message if we find only one. */
 #define CONFIG_SYS_BAUDRATE_TABLE  \
 		{300, 600, 1200, 2400, 4800, 9600, 19200, 38400, 115200}
 
-#define CONFIG_CONSOLE		ttyS0
-#define CONFIG_BAUDRATE		115200
+#define CONSOLE			ttyS0
 
 #define CONFIG_SYS_NS16550_COM1	(CONFIG_SYS_IMMR + 0x4500)
 #define CONFIG_SYS_NS16550_COM2	(CONFIG_SYS_IMMR + 0x4600)
@@ -403,8 +384,6 @@ boards, we say we have two, but don't display a message if we find only one. */
 #define CONFIG_SYS_PCI2_IO_SIZE		0x01000000	/* 16M */
 #endif
 
-#define CONFIG_PCI_PNP			/* do pci plug-and-play */
-
 #ifndef CONFIG_PCI_PNP
     #define PCI_ENET0_IOADDR	0x00000000
     #define PCI_ENET0_MEMADDR	CONFIG_SYS_PCI2_MEM_BASE
@@ -425,10 +404,6 @@ boards, we say we have two, but don't display a message if we find only one. */
 /* TSEC */
 
 #ifdef CONFIG_TSEC_ENET
-
-#define CONFIG_MII
-#define CONFIG_PHY_GIGE		/* In case CONFIG_CMD_MII is specified */
-
 #define CONFIG_TSEC1
 
 #ifdef CONFIG_TSEC1
@@ -460,15 +435,11 @@ boards, we say we have two, but don't display a message if we find only one. */
 #define CONFIG_ENV_OVERWRITE
 
 #ifndef CONFIG_SYS_RAMBOOT
-  #define CONFIG_ENV_IS_IN_FLASH
   #define CONFIG_ENV_ADDR	\
 			(CONFIG_SYS_MONITOR_BASE + CONFIG_SYS_MONITOR_LEN)
   #define CONFIG_ENV_SECT_SIZE	0x10000 /* 64K (one sector) for environment */
   #define CONFIG_ENV_SIZE	0x2000
 #else
-  #define CONFIG_SYS_NO_FLASH	/* Flash is not usable now */
-  #undef  CONFIG_FLASH_CFI_DRIVER
-  #define CONFIG_ENV_IS_NOWHERE	/* Store ENV in memory only */
   #define CONFIG_ENV_ADDR	(CONFIG_SYS_MONITOR_BASE - 0x1000)
   #define CONFIG_ENV_SIZE	0x2000
 #endif
@@ -480,37 +451,6 @@ boards, we say we have two, but don't display a message if we find only one. */
  * BOOTP options
  */
 #define CONFIG_BOOTP_BOOTFILESIZE
-#define CONFIG_BOOTP_BOOTPATH
-#define CONFIG_BOOTP_GATEWAY
-#define CONFIG_BOOTP_HOSTNAME
-
-/*
- * Command line configuration.
- */
-#define CONFIG_CMD_DATE
-#define CONFIG_CMD_IRQ
-#define CONFIG_CMD_SDRAM
-
-#if defined(CONFIG_COMPACT_FLASH) || defined(CONFIG_SATA_SIL3114) \
-				|| defined(CONFIG_USB_STORAGE)
-	#define CONFIG_DOS_PARTITION
-	#define CONFIG_SUPPORT_VFAT
-#endif
-
-#ifdef CONFIG_COMPACT_FLASH
-	#define CONFIG_CMD_IDE
-#endif
-
-#ifdef CONFIG_SATA_SIL3114
-	#define CONFIG_CMD_SATA
-#endif
-
-#if defined(CONFIG_SATA_SIL3114) || defined(CONFIG_USB_STORAGE)
-#endif
-
-#ifdef CONFIG_PCI
-	#define CONFIG_CMD_PCI
-#endif
 
 /* Watchdog */
 #undef CONFIG_WATCHDOG		/* watchdog disabled */
@@ -518,24 +458,9 @@ boards, we say we have two, but don't display a message if we find only one. */
 /*
  * Miscellaneous configurable options
  */
-#define CONFIG_SYS_LONGHELP		/* undef to save memory */
-#define CONFIG_CMDLINE_EDITING		/* Command-line editing */
-#define CONFIG_AUTO_COMPLETE		/* add autocompletion support */
 
 #define CONFIG_SYS_LOAD_ADDR	0x2000000	/* default load address */
 #define CONFIG_LOADADDR	800000	/* default location for tftp and bootm */
-
-#if defined(CONFIG_CMD_KGDB)
-	#define CONFIG_SYS_CBSIZE	1024	/* Console I/O Buffer Size */
-#else
-	#define CONFIG_SYS_CBSIZE	256	/* Console I/O Buffer Size */
-#endif
-
-				/* Print Buffer Size */
-#define CONFIG_SYS_PBSIZE (CONFIG_SYS_CBSIZE + sizeof(CONFIG_SYS_PROMPT) + 16)
-#define CONFIG_SYS_MAXARGS	16	/* max number of command args */
-				/* Boot Argument Buffer Size */
-#define CONFIG_SYS_BARGSIZE	CONFIG_SYS_CBSIZE
 
 /*
  * For booting Linux, the board info and command line data
@@ -544,6 +469,7 @@ boards, we say we have two, but don't display a message if we find only one. */
  */
 				/* Initial Memory map for Linux*/
 #define CONFIG_SYS_BOOTMAPSZ	(256 << 20)
+#define CONFIG_SYS_BOOTM_LEN	(64 << 20)	/* Increase max gunzip size */
 
 #define CONFIG_SYS_HRCW_LOW (\
 	HRCWL_LCL_BUS_TO_SCB_CLK_1X1 |\
@@ -713,12 +639,6 @@ boards, we say we have two, but don't display a message if we find only one. */
 
 #define CONFIG_NETDEV		"eth0"
 
-#ifdef CONFIG_MPC8349ITX
-#define CONFIG_HOSTNAME		"mpc8349emitx"
-#else
-#define CONFIG_HOSTNAME		"mpc8349emitxgp"
-#endif
-
 /* Default path and filenames */
 #define CONFIG_ROOTPATH		"/nfsroot/rootfs"
 #define CONFIG_BOOTFILE		"uImage"
@@ -732,18 +652,8 @@ boards, we say we have two, but don't display a message if we find only one. */
 #endif
 
 
-#define CONFIG_BOOTARGS \
-	"root=/dev/nfs rw" \
-	" nfsroot=" __stringify(CONFIG_SERVERIP) ":" CONFIG_ROOTPATH	\
-	" ip=" __stringify(CONFIG_IPADDR) ":"		\
-		__stringify(CONFIG_SERVERIP) ":"	\
-		__stringify(CONFIG_GATEWAYIP) ":"	\
-		__stringify(CONFIG_NETMASK) ":"		\
-		CONFIG_HOSTNAME ":" CONFIG_NETDEV ":off"		\
-	" console=" __stringify(CONFIG_CONSOLE) "," __stringify(CONFIG_BAUDRATE)
-
 #define CONFIG_EXTRA_ENV_SETTINGS \
-	"console=" __stringify(CONFIG_CONSOLE) "\0"			\
+	"console=" __stringify(CONSOLE) "\0"			\
 	"netdev=" CONFIG_NETDEV "\0"					\
 	"uboot=" CONFIG_UBOOTPATH "\0"					\
 	"tftpflash=tftpboot $loadaddr $uboot; "				\

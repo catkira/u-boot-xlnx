@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2002-2010
  * Wolfgang Denk, DENX Software Engineering, wd@denx.de.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef	__ASM_GBL_DATA_H
@@ -19,7 +18,7 @@ struct arch_global_data {
 	u8 sdhc_adapter;
 #endif
 #endif
-#if defined(CONFIG_8xx)
+#if defined(CONFIG_MPC8xx)
 	unsigned long brg_clk;
 #endif
 #if defined(CONFIG_CPM2)
@@ -31,6 +30,9 @@ struct arch_global_data {
 #endif
 	/* TODO: sjg@chromium.org: Should these be unslgned long? */
 #if defined(CONFIG_MPC83xx)
+#ifdef CONFIG_CLK_MPC83XX
+	u32 core_clk;
+#else
 	/* There are other clocks in the MPC83XX */
 	u32 csb_clk;
 # if defined(CONFIG_MPC8308) || defined(CONFIG_MPC831x) || \
@@ -63,6 +65,7 @@ struct arch_global_data {
 	u32 mem_sec_clk;
 # endif /* CONFIG_MPC8360 */
 #endif
+#endif
 #if defined(CONFIG_MPC85xx) || defined(CONFIG_MPC86xx)
 	u32 lbc_clk;
 	void *cpu;
@@ -84,25 +87,15 @@ struct arch_global_data {
 #if defined(CONFIG_E500)
 	u32 used_tlb_cams[(CONFIG_SYS_NUM_TLBCAMS+31)/32];
 #endif
-#if defined(CONFIG_MPC5xxx)
-	unsigned long ipb_clk;
-#endif
-#if defined(CONFIG_MPC512X)
-	u32 ips_clk;
-	u32 csb_clk;
-#endif /* CONFIG_MPC512X */
 	unsigned long reset_status;	/* reset status register at boot */
 #if defined(CONFIG_MPC83xx)
 	unsigned long arbiter_event_attributes;
 	unsigned long arbiter_event_address;
 #endif
-#if defined(CONFIG_SYS_ALLOC_DPRAM) || defined(CONFIG_CPM2)
+#if defined(CONFIG_CPM2)
 	unsigned int dp_alloc_base;
 	unsigned int dp_alloc_top;
 #endif
-#if defined(CONFIG_4xx)
-	u32 uart_clk;
-#endif /* CONFIG_4xx */
 #ifdef CONFIG_SYS_FPGA_COUNT
 	unsigned fpga_state[CONFIG_SYS_FPGA_COUNT];
 #endif

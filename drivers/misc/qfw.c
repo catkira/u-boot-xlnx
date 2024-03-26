@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015 Miao Yan <yanmiaobest@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -32,7 +31,7 @@ static LIST_HEAD(fw_list);
  *          be ignored.
  * @return: 0 on success, or negative value on failure
  */
-static int bios_linker_allocate(struct bios_linker_entry *entry, u32 *addr)
+static int bios_linker_allocate(struct bios_linker_entry *entry, ulong *addr)
 {
 	uint32_t size, align;
 	struct fw_file *file;
@@ -147,7 +146,7 @@ static int bios_linker_add_checksum(struct bios_linker_entry *entry)
 }
 
 /* This function loads and patches ACPI tables provided by QEMU */
-u32 write_acpi_tables(u32 addr)
+ulong write_acpi_tables(ulong addr)
 {
 	int i, ret = 0;
 	struct fw_file *file;
@@ -221,6 +220,14 @@ out:
 
 	free(table_loader);
 	return addr;
+}
+
+ulong acpi_get_rsdp_addr(void)
+{
+	struct fw_file *file;
+
+	file = qemu_fwcfg_find_file("etc/acpi/rsdp");
+	return file->addr;
 }
 #endif
 

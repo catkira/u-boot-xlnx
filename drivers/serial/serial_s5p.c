@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2009 SAMSUNG Electronics
  * Minkyu Kang <mk7.kang@samsung.com>
  * Heungjun Kim <riverful.kim@samsung.com>
  *
  * based on drivers/serial/s3c64xx.c
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -182,12 +181,12 @@ static int s5p_serial_ofdata_to_platdata(struct udevice *dev)
 	struct s5p_serial_platdata *plat = dev->platdata;
 	fdt_addr_t addr;
 
-	addr = dev_get_addr(dev);
+	addr = devfdt_get_addr(dev);
 	if (addr == FDT_ADDR_T_NONE)
 		return -EINVAL;
 
 	plat->reg = (struct s5p_uart *)addr;
-	plat->port_id = fdtdec_get_int(gd->fdt_blob, dev->of_offset,
+	plat->port_id = fdtdec_get_int(gd->fdt_blob, dev_of_offset(dev),
 					"id", dev->seq);
 	return 0;
 }
@@ -212,7 +211,6 @@ U_BOOT_DRIVER(serial_s5p) = {
 	.platdata_auto_alloc_size = sizeof(struct s5p_serial_platdata),
 	.probe = s5p_serial_probe,
 	.ops	= &s5p_serial_ops,
-	.flags = DM_FLAG_PRE_RELOC,
 };
 #endif
 

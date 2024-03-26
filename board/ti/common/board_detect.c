@@ -1,19 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Library to support early TI EVM EEPROM handling
  *
  * Copyright (C) 2015-2016 Texas Instruments Incorporated - http://www.ti.com/
  *	Lokesh Vutla
  *	Steve Kipisz
- *
- * SPDX-License-Identifier:    GPL-2.0+
  */
 
 #include <common.h>
 #include <asm/omap_common.h>
+#include <dm/uclass.h>
 #include <i2c.h>
 
 #include "board_detect.h"
 
+#if !defined(CONFIG_DM_I2C)
 /**
  * ti_i2c_eeprom_init - Initialize an i2c bus and probe for a device
  * @i2c_bus: i2c bus number to initialize
@@ -48,6 +49,7 @@ static int __maybe_unused ti_i2c_eeprom_read(int dev_addr, int offset,
 {
 	return i2c_read(dev_addr, offset, 2, ep, epsize);
 }
+#endif
 
 /**
  * ti_eeprom_string_cleanup() - Handle eeprom programming errors
@@ -76,8 +78,56 @@ __weak void gpi2c_init(void)
 static int __maybe_unused ti_i2c_eeprom_get(int bus_addr, int dev_addr,
 					    u32 header, u32 size, uint8_t *ep)
 {
-	u32 byte, hdr_read;
+	u32 hdr_read;
 	int rc;
+
+#if defined(CONFIG_DM_I2C)
+	struct udevice *dev;
+	struct udevice *bus;
+
+	rc = uclass_get_device_by_seq(UCLASS_I2C, bus_addr, &bus);
+	if (rc)
+		return rc;
+	rc = i2c_get_chip(bus, dev_addr, 1, &dev);
+	if (rc)
+		return rc;
+
+	/*
+	 * Read the header first then only read the other contents.
+	 */
+	rc = i2c_set_chip_offset_len(dev, 2);
+	if (rc)
+		return rc;
+
+	rc = dm_i2c_read(dev, 0, (uint8_t *)&hdr_read, 4);
+	if (rc)
+		return rc;
+
+	/* Corrupted data??? */
+	if (hdr_read != header) {
+		rc = dm_i2c_read(dev, 0, (uint8_t *)&hdr_read, 4);
+		/*
+		 * read the eeprom header using i2c again, but use only a
+		 * 1 byte address (some legacy boards need this..)
+		 */
+		if (rc) {
+			rc =  i2c_set_chip_offset_len(dev, 1);
+			if (rc)
+				return rc;
+
+			rc = dm_i2c_read(dev, 0, (uint8_t *)&hdr_read, 4);
+		}
+		if (rc)
+			return rc;
+	}
+	if (hdr_read != header)
+		return -1;
+
+	rc = dm_i2c_read(dev, 0, ep, size);
+	if (rc)
+		return rc;
+#else
+	u32 byte;
 
 	gpi2c_init();
 	rc = ti_i2c_eeprom_init(bus_addr, dev_addr);
@@ -88,6 +138,7 @@ static int __maybe_unused ti_i2c_eeprom_get(int bus_addr, int dev_addr,
 	 * Read the header first then only read the other contents.
 	 */
 	byte = 2;
+
 	rc = i2c_read(dev_addr, 0x0, byte, (uint8_t *)&hdr_read, 4);
 	if (rc)
 		return rc;
@@ -100,9 +151,10 @@ static int __maybe_unused ti_i2c_eeprom_get(int bus_addr, int dev_addr,
 		 * 1 byte address (some legacy boards need this..)
 		 */
 		byte = 1;
-		if (rc)
+		if (rc) {
 			rc = i2c_read(dev_addr, 0x0, byte, (uint8_t *)&hdr_read,
 				      4);
+		}
 		if (rc)
 			return rc;
 	}
@@ -112,7 +164,31 @@ static int __maybe_unused ti_i2c_eeprom_get(int bus_addr, int dev_addr,
 	rc = i2c_read(dev_addr, 0x0, byte, ep, size);
 	if (rc)
 		return rc;
+#endif
+	return 0;
+}
 
+int __maybe_unused ti_i2c_eeprom_am_set(const char *name, const char *rev)
+{
+	struct ti_common_eeprom *ep;
+
+	if (!name || !rev)
+		return -1;
+
+	ep = TI_EEPROM_DATA;
+	if (ep->header == TI_EEPROM_HEADER_MAGIC)
+		goto already_set;
+
+	/* Set to 0 all fields */
+	memset(ep, 0, sizeof(*ep));
+	strncpy(ep->name, name, TI_EEPROM_HDR_NAME_LEN);
+	strncpy(ep->version, rev, TI_EEPROM_HDR_REV_LEN);
+	/* Some dummy serial number to identify the platform */
+	strncpy(ep->serial, "0000", TI_EEPROM_HDR_SERIAL_LEN);
+	/* Mark it with a valid header */
+	ep->header = TI_EEPROM_HEADER_MAGIC;
+
+already_set:
 	return 0;
 }
 
@@ -123,14 +199,17 @@ int __maybe_unused ti_i2c_eeprom_am_get(int bus_addr, int dev_addr)
 	struct ti_common_eeprom *ep;
 
 	ep = TI_EEPROM_DATA;
+#ifndef CONFIG_SPL_BUILD
 	if (ep->header == TI_EEPROM_HEADER_MAGIC)
-		goto already_read;
+		return 0; /* EEPROM has already been read */
+#endif
 
 	/* Initialize with a known bad marker for i2c fails.. */
 	ep->header = TI_DEAD_EEPROM_MAGIC;
 	ep->name[0] = 0x0;
 	ep->version[0] = 0x0;
 	ep->serial[0] = 0x0;
+	ep->config[0] = 0x0;
 
 	rc = ti_i2c_eeprom_get(bus_addr, dev_addr, TI_EEPROM_HEADER_MAGIC,
 			       sizeof(am_ep), (uint8_t *)&am_ep);
@@ -156,7 +235,6 @@ int __maybe_unused ti_i2c_eeprom_am_get(int bus_addr, int dev_addr)
 	memcpy(ep->mac_addr, am_ep.mac_addr,
 	       TI_EEPROM_HDR_NO_OF_MAC_ADDR * TI_EEPROM_HDR_ETH_ALEN);
 
-already_read:
 	return 0;
 }
 
@@ -167,14 +245,17 @@ int __maybe_unused ti_i2c_eeprom_dra7_get(int bus_addr, int dev_addr)
 	struct ti_common_eeprom *ep;
 
 	ep = TI_EEPROM_DATA;
+#ifndef CONFIG_SPL_BUILD
 	if (ep->header == DRA7_EEPROM_HEADER_MAGIC)
-		goto already_read;
+		return 0; /* EEPROM has already been read */
+#endif
 
 	/* Initialize with a known bad marker for i2c fails.. */
-	ep->header = 0xADEAD12C;
+	ep->header = TI_DEAD_EEPROM_MAGIC;
 	ep->name[0] = 0x0;
 	ep->version[0] = 0x0;
 	ep->serial[0] = 0x0;
+	ep->config[0] = 0x0;
 	ep->emif1_size = 0;
 	ep->emif2_size = 0;
 
@@ -200,7 +281,6 @@ int __maybe_unused ti_i2c_eeprom_dra7_get(int bus_addr, int dev_addr)
 	strlcpy(ep->config, dra7_ep.config, TI_EEPROM_HDR_CONFIG_LEN + 1);
 	ti_eeprom_string_cleanup(ep->config);
 
-already_read:
 	return 0;
 }
 
@@ -229,9 +309,7 @@ char * __maybe_unused board_ti_get_rev(void)
 {
 	struct ti_common_eeprom *ep = TI_EEPROM_DATA;
 
-	if (ep->header == TI_DEAD_EEPROM_MAGIC)
-		return NULL;
-
+	/* if ep->header == TI_DEAD_EEPROM_MAGIC, this is empty already */
 	return ep->version;
 }
 
@@ -239,9 +317,7 @@ char * __maybe_unused board_ti_get_config(void)
 {
 	struct ti_common_eeprom *ep = TI_EEPROM_DATA;
 
-	if (ep->header == TI_DEAD_EEPROM_MAGIC)
-		return NULL;
-
+	/* if ep->header == TI_DEAD_EEPROM_MAGIC, this is empty already */
 	return ep->config;
 }
 
@@ -249,9 +325,7 @@ char * __maybe_unused board_ti_get_name(void)
 {
 	struct ti_common_eeprom *ep = TI_EEPROM_DATA;
 
-	if (ep->header == TI_DEAD_EEPROM_MAGIC)
-		return NULL;
-
+	/* if ep->header == TI_DEAD_EEPROM_MAGIC, this is empty already */
 	return ep->name;
 }
 
@@ -300,19 +374,91 @@ void __maybe_unused set_board_info_env(char *name)
 	struct ti_common_eeprom *ep = TI_EEPROM_DATA;
 
 	if (name)
-		setenv("board_name", name);
+		env_set("board_name", name);
 	else if (ep->name)
-		setenv("board_name", ep->name);
+		env_set("board_name", ep->name);
 	else
-		setenv("board_name", unknown);
+		env_set("board_name", unknown);
 
 	if (ep->version)
-		setenv("board_rev", ep->version);
+		env_set("board_rev", ep->version);
 	else
-		setenv("board_rev", unknown);
+		env_set("board_rev", unknown);
 
 	if (ep->serial)
-		setenv("board_serial", ep->serial);
+		env_set("board_serial", ep->serial);
 	else
-		setenv("board_serial", unknown);
+		env_set("board_serial", unknown);
+}
+
+static u64 mac_to_u64(u8 mac[6])
+{
+	int i;
+	u64 addr = 0;
+
+	for (i = 0; i < 6; i++) {
+		addr <<= 8;
+		addr |= mac[i];
+	}
+
+	return addr;
+}
+
+static void u64_to_mac(u64 addr, u8 mac[6])
+{
+	mac[5] = addr;
+	mac[4] = addr >> 8;
+	mac[3] = addr >> 16;
+	mac[2] = addr >> 24;
+	mac[1] = addr >> 32;
+	mac[0] = addr >> 40;
+}
+
+void board_ti_set_ethaddr(int index)
+{
+	uint8_t mac_addr[6];
+	int i;
+	u64 mac1, mac2;
+	u8 mac_addr1[6], mac_addr2[6];
+	int num_macs;
+	/*
+	 * Export any Ethernet MAC addresses from EEPROM.
+	 * The 2 MAC addresses in EEPROM define the address range.
+	 */
+	board_ti_get_eth_mac_addr(0, mac_addr1);
+	board_ti_get_eth_mac_addr(1, mac_addr2);
+
+	if (is_valid_ethaddr(mac_addr1) && is_valid_ethaddr(mac_addr2)) {
+		mac1 = mac_to_u64(mac_addr1);
+		mac2 = mac_to_u64(mac_addr2);
+
+		/* must contain an address range */
+		num_macs = mac2 - mac1 + 1;
+		if (num_macs <= 0)
+			return;
+
+		if (num_macs > 50) {
+			printf("%s: Too many MAC addresses: %d. Limiting to 50\n",
+			       __func__, num_macs);
+			num_macs = 50;
+		}
+
+		for (i = 0; i < num_macs; i++) {
+			u64_to_mac(mac1 + i, mac_addr);
+			if (is_valid_ethaddr(mac_addr)) {
+				eth_env_set_enetaddr_by_index("eth", i + index,
+							      mac_addr);
+			}
+		}
+	}
+}
+
+bool __maybe_unused board_ti_was_eeprom_read(void)
+{
+	struct ti_common_eeprom *ep = TI_EEPROM_DATA;
+
+	if (ep->header == TI_EEPROM_HEADER_MAGIC)
+		return true;
+	else
+		return false;
 }

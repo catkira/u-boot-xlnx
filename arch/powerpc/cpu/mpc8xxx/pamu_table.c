@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2012-2016 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -24,6 +23,14 @@ void construct_pamu_addr_table(struct pamu_addr_tbl *tbl, int *num_entries)
 	tbl->start_addr[i] =
 		(uint64_t)virt_to_phys((void *)CONFIG_SYS_FLASH_BASE_PHYS);
 	tbl->size[i] = 256 * 1024 * 1024; /* 256MB flash */
+	tbl->end_addr[i] = tbl->start_addr[i] +  tbl->size[i] - 1;
+
+	i++;
+#endif
+#if (defined(CONFIG_SPL_BUILD) && (CONFIG_SYS_INIT_L3_VADDR))
+	tbl->start_addr[i] =
+		(uint64_t)virt_to_phys((void *)CONFIG_SYS_INIT_L3_VADDR);
+	tbl->size[i] = 256 * 1024; /* 256K CPC flash */
 	tbl->end_addr[i] = tbl->start_addr[i] +  tbl->size[i] - 1;
 
 	i++;

@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2011 Freescale Semiconductor, Inc
  * Andy Fleming
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 /*
@@ -13,7 +12,6 @@
 #include <command.h>
 #include <miiphy.h>
 #include <phy.h>
-
 
 static char last_op[2];
 static uint last_data;
@@ -27,12 +25,12 @@ static uint last_reg_hi;
 static int extract_range(char *input, int *plo, int *phi)
 {
 	char *end;
-	*plo = simple_strtol(input, &end, 0);
+	*plo = simple_strtol(input, &end, 16);
 	if (end == input)
 		return -1;
 
 	if ((*end == '-') && *(++end))
-		*phi = simple_strtol(end, NULL, 0);
+		*phi = simple_strtol(end, NULL, 16);
 	else if (*end == '\0')
 		*phi = *plo;
 	else
@@ -79,7 +77,7 @@ static int mdio_read_ranges(struct phy_device *phydev, struct mii_dev *bus,
 
 	printf("Reading from bus %s\n", bus->name);
 	for (addr = addrlo; addr <= addrhi; addr++) {
-		printf("PHY at address %d:\n", addr);
+		printf("PHY at address %x:\n", addr);
 
 		for (devad = devadlo; devad <= devadhi; devad++) {
 			for (reg = reglo; reg <= reghi; reg++) {
@@ -243,13 +241,13 @@ static int do_mdio(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	case 'r':
 		if (pos > 1)
 			if (extract_reg_range(argv[pos--], &devadlo, &devadhi,
-					&reglo, &reghi))
+					      &reglo, &reghi))
 				return -1;
 
 	default:
 		if (pos > 1)
-			if (extract_phy_range(&(argv[2]), pos - 1, &bus,
-					&phydev, &addrlo, &addrhi))
+			if (extract_phy_range(&argv[2], pos - 1, &bus,
+					      &phydev, &addrlo, &addrhi))
 				return -1;
 
 		break;

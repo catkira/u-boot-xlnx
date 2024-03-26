@@ -1,13 +1,10 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  linux/arch/arm/lib/memcpy.S
  *
  *  Author:	Nicolas Pitre
  *  Created:	Sep 28, 2005
  *  Copyright:	MontaVista Software, Inc.
- *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License version 2 as
- *  published by the Free Software Foundation.
  */
 
 #include <linux/linkage.h>
@@ -56,13 +53,13 @@
 
 /* Prototype: void *memcpy(void *dest, const void *src, size_t n); */
 	.syntax unified
-#if defined(CONFIG_SYS_THUMB_BUILD) && !defined(MEMCPY_NO_THUMB_BUILD)
+#if CONFIG_IS_ENABLED(SYS_THUMB_BUILD) && !defined(MEMCPY_NO_THUMB_BUILD)
 	.thumb
 	.thumb_func
 #endif
 ENTRY(memcpy)
 		cmp	r0, r1
-		moveq	pc, lr
+		bxeq	lr
 
 		enter	r4, lr
 
@@ -150,7 +147,8 @@ ENTRY(memcpy)
 		str1b	r0, r4, cs, abort=21f
 		str1b	r0, ip, cs, abort=21f
 
-		exit	r4, pc
+		exit	r4, lr
+		bx	lr
 
 9:		rsb	ip, ip, #4
 		cmp	ip, #2
@@ -259,7 +257,8 @@ ENTRY(memcpy)
 	.endm
 
 	.macro	copy_abort_end
-	ldmfd	sp!, {r4, pc}
+	ldmfd	sp!, {r4, lr}
+	bx	lr
 	.endm
 
 ENDPROC(memcpy)

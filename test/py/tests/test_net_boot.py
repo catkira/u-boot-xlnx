@@ -56,6 +56,7 @@ def test_net_tftpboot_boot(u_boot_console):
 	    u_boot_console.drain_console()
 	    u_boot_console.cleanup_spawn()
 
+@pytest.mark.buildconfigspec('cmd_net')
 def test_net_tftpboot_boot_config2(u_boot_console):
     if not test_net.net_set_up:
         pytest.skip('Network not initialized')
@@ -71,6 +72,10 @@ def test_net_tftpboot_boot_config2(u_boot_console):
     addr = f.get('addr', None)
     if not addr:
       addr = u_boot_utils.find_ram_base(u_boot_console)
+
+    response = u_boot_console.run_command('imi %x' % addr)
+    if not "config@2" in response:
+	pytest.skip("Second configuration not found");
 
     timeout = 50000
     with u_boot_console.temporary_timeout(timeout):

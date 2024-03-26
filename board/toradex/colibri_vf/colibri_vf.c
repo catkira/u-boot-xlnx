@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Toradex, Inc.
  *
  * Based on vf610twr.c:
  * Copyright 2013 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -15,13 +14,18 @@
 #include <asm/arch/crm_regs.h>
 #include <asm/arch/clock.h>
 #include <mmc.h>
+#include <fdt_support.h>
 #include <fsl_esdhc.h>
+#include <fsl_dcu_fb.h>
+#include <jffs2/load_kernel.h>
 #include <miiphy.h>
+#include <mtd_node.h>
 #include <netdev.h>
 #include <i2c.h>
 #include <g_dnl.h>
 #include <asm/gpio.h>
 #include <usb.h>
+#include "../common/tdx-common.h"
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -38,14 +42,6 @@ DECLARE_GLOBAL_DATA_PTR;
 #define USB_CDET_GPIO		102
 
 static struct ddrmc_cr_setting colibri_vf_cr_settings[] = {
-	/* levelling */
-	{ DDRMC_CR97_WRLVL_EN, 97 },
-	{ DDRMC_CR98_WRLVL_DL_0(0), 98 },
-	{ DDRMC_CR99_WRLVL_DL_1(0), 99 },
-	{ DDRMC_CR102_RDLVL_REG_EN | DDRMC_CR102_RDLVL_GT_REGEN, 102 },
-	{ DDRMC_CR105_RDLVL_DL_0(0), 105 },
-	{ DDRMC_CR106_RDLVL_GTDL_0(4), 106 },
-	{ DDRMC_CR110_RDLVL_DL_1(0) | DDRMC_CR110_RDLVL_GTDL_1(4), 110 },
 	/* AXI */
 	{ DDRMC_CR117_AXI0_W_PRI(0) | DDRMC_CR117_AXI0_R_PRI(0), 117 },
 	{ DDRMC_CR118_AXI1_W_PRI(1) | DDRMC_CR118_AXI1_R_PRI(1), 118 },
@@ -84,7 +80,7 @@ static struct ddrmc_cr_setting colibri_vf_cr_settings[] = {
 		   DDRMC_CR154_PAD_ZQ_MODE(1) |
 		   DDRMC_CR154_DDR_SEL_PAD_CONTR(3) |
 		   DDRMC_CR154_PAD_ZQ_HW_FOR(1), 154 },
-	{ DDRMC_CR155_PAD_ODT_BYTE1(1) | DDRMC_CR155_PAD_ODT_BYTE0(1), 155 },
+	{ DDRMC_CR155_PAD_ODT_BYTE1(2) | DDRMC_CR155_PAD_ODT_BYTE0(2), 155 },
 	{ DDRMC_CR158_TWR(6), 158 },
 	{ DDRMC_CR161_ODT_EN(1) | DDRMC_CR161_TODTH_RD(2) |
 		   DDRMC_CR161_TODTH_WR(2), 161 },
@@ -291,6 +287,49 @@ static void setup_iomux_gpio(void)
 }
 #endif
 
+#ifdef CONFIG_VIDEO_FSL_DCU_FB
+static void setup_iomux_fsl_dcu(void)
+{
+	static const iomux_v3_cfg_t dcu0_pads[] = {
+		VF610_PAD_PTE0__DCU0_HSYNC,
+		VF610_PAD_PTE1__DCU0_VSYNC,
+		VF610_PAD_PTE2__DCU0_PCLK,
+		VF610_PAD_PTE4__DCU0_DE,
+		VF610_PAD_PTE5__DCU0_R0,
+		VF610_PAD_PTE6__DCU0_R1,
+		VF610_PAD_PTE7__DCU0_R2,
+		VF610_PAD_PTE8__DCU0_R3,
+		VF610_PAD_PTE9__DCU0_R4,
+		VF610_PAD_PTE10__DCU0_R5,
+		VF610_PAD_PTE11__DCU0_R6,
+		VF610_PAD_PTE12__DCU0_R7,
+		VF610_PAD_PTE13__DCU0_G0,
+		VF610_PAD_PTE14__DCU0_G1,
+		VF610_PAD_PTE15__DCU0_G2,
+		VF610_PAD_PTE16__DCU0_G3,
+		VF610_PAD_PTE17__DCU0_G4,
+		VF610_PAD_PTE18__DCU0_G5,
+		VF610_PAD_PTE19__DCU0_G6,
+		VF610_PAD_PTE20__DCU0_G7,
+		VF610_PAD_PTE21__DCU0_B0,
+		VF610_PAD_PTE22__DCU0_B1,
+		VF610_PAD_PTE23__DCU0_B2,
+		VF610_PAD_PTE24__DCU0_B3,
+		VF610_PAD_PTE25__DCU0_B4,
+		VF610_PAD_PTE26__DCU0_B5,
+		VF610_PAD_PTE27__DCU0_B6,
+		VF610_PAD_PTE28__DCU0_B7,
+	};
+
+	imx_iomux_v3_setup_multiple_pads(dcu0_pads, ARRAY_SIZE(dcu0_pads));
+}
+
+static void setup_tcon(void)
+{
+	setbits_le32(TCON0_BASE_ADDR, (1 << 29));
+}
+#endif
+
 #ifdef CONFIG_FSL_ESDHC
 struct fsl_esdhc_cfg esdhc_cfg[1] = {
 	{ESDHC1_BASE_ADDR},
@@ -364,12 +403,18 @@ static void clock_init(void)
 	clrsetbits_le32(&ccm->ccgr10, CCM_REG_CTRL_MASK,
 			CCM_CCGR10_NFC_CTRL_MASK);
 
-#ifdef CONFIG_CI_UDC
+#ifdef CONFIG_USB_EHCI_VF
 	setbits_le32(&ccm->ccgr1, CCM_CCGR1_USBC0_CTRL_MASK);
-#endif
-
-#ifdef CONFIG_USB_EHCI
 	setbits_le32(&ccm->ccgr7, CCM_CCGR7_USBC1_CTRL_MASK);
+
+	clrsetbits_le32(&anadig->pll3_ctrl, ANADIG_PLL3_CTRL_BYPASS |
+			ANADIG_PLL3_CTRL_POWERDOWN |
+			ANADIG_PLL3_CTRL_DIV_SELECT,
+			ANADIG_PLL3_CTRL_ENABLE);
+	clrsetbits_le32(&anadig->pll7_ctrl, ANADIG_PLL7_CTRL_BYPASS |
+			ANADIG_PLL7_CTRL_POWERDOWN |
+			ANADIG_PLL7_CTRL_DIV_SELECT,
+			ANADIG_PLL7_CTRL_ENABLE);
 #endif
 
 	clrsetbits_le32(&anadig->pll5_ctrl, ANADIG_PLL5_CTRL_BYPASS |
@@ -418,9 +463,14 @@ static void clock_init(void)
 			CCM_CSCDR2_ESDHC1_EN | CCM_CSCDR2_ESDHC1_CLK_DIV(0) |
 			CCM_CSCDR2_NFC_EN);
 	clrsetbits_le32(&ccm->cscdr3, CCM_REG_CTRL_MASK,
-			CCM_CSCDR3_NFC_PRE_DIV(5));
+			CCM_CSCDR3_NFC_PRE_DIV(3));
 	clrsetbits_le32(&ccm->cscmr2, CCM_REG_CTRL_MASK,
 			CCM_CSCMR2_RMII_CLK_SEL(2));
+
+#ifdef CONFIG_VIDEO_FSL_DCU_FB
+		setbits_le32(&ccm->ccgr1, CCM_CCGR1_TCON0_CTRL_MASK);
+		setbits_le32(&ccm->ccgr3, CCM_CCGR3_DCU0_CTRL_MASK);
+#endif
 }
 
 static void mscm_init(void)
@@ -460,6 +510,11 @@ int board_early_init_f(void)
 	setup_iomux_dspi();
 #endif
 
+#ifdef CONFIG_VIDEO_FSL_DCU_FB
+	setup_tcon();
+	setup_iomux_fsl_dcu();
+#endif
+
 	return 0;
 }
 
@@ -468,26 +523,10 @@ int board_late_init(void)
 {
 	struct src *src = (struct src *)SRC_BASE_ADDR;
 
-	/* Default memory arguments */
-	if (!getenv("memargs")) {
-		switch (gd->ram_size) {
-		case 0x08000000:
-			/* 128 MB */
-			setenv("memargs", "mem=128M");
-			break;
-		case 0x10000000:
-			/* 256 MB */
-			setenv("memargs", "mem=256M");
-			break;
-		default:
-			printf("Failed detecting RAM size.\n");
-		}
-	}
-
 	if (((src->sbmr2 & SRC_SBMR2_BMOD_MASK) >> SRC_SBMR2_BMOD_SHIFT)
 			== SRC_SBMR2_BMOD_SERIAL) {
 		printf("Serial Downloader recovery mode, disable autoboot\n");
-		setenv("bootdelay", "-1");
+		env_set("bootdelay", "-1");
 	}
 
 	return 0;
@@ -528,21 +567,28 @@ int checkboard(void)
 	return 0;
 }
 
-int g_dnl_bind_fixup(struct usb_device_descriptor *dev, const char *name)
+#if defined(CONFIG_OF_LIBFDT) && defined(CONFIG_OF_BOARD_SETUP)
+int ft_board_setup(void *blob, bd_t *bd)
 {
-	unsigned short usb_pid;
+	int ret = 0;
+#ifdef CONFIG_FDT_FIXUP_PARTITIONS
+	static const struct node_info nodes[] = {
+		{ "fsl,vf610-nfc", MTD_DEV_TYPE_NAND, }, /* NAND flash */
+	};
 
-	put_unaligned(CONFIG_TRDX_VID, &dev->idVendor);
+	/* Update partition nodes using info from mtdparts env var */
+	puts("   Updating MTD partitions...\n");
+	fdt_fixup_mtdparts(blob, nodes, ARRAY_SIZE(nodes));
+#endif
+#ifdef CONFIG_VIDEO_FSL_DCU_FB
+	ret = fsl_dcu_fixedfb_setup(blob);
+	if (ret)
+		return ret;
+#endif
 
-	if (is_colibri_vf61())
-		usb_pid = CONFIG_TRDX_PID_COLIBRI_VF61IT;
-	else
-		usb_pid = CONFIG_TRDX_PID_COLIBRI_VF50IT;
-
-	put_unaligned(usb_pid, &dev->idProduct);
-
-	return 0;
+	return ft_common_board_setup(blob, bd);
 }
+#endif
 
 #ifdef CONFIG_USB_EHCI_VF
 int board_ehci_hcd_init(int port)

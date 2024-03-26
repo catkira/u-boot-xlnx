@@ -1,11 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2007
  * Yoshihiro Shimoda <shimoda.yoshihiro@renesas.com>
  *
  * (C) Copyright 2007
  * Nobuhiro Iwamatsu <iwamatsu@nigauri.org>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -65,10 +64,4 @@ void dcache_disable(void)
 int dcache_status(void)
 {
 	return 0;
-}
-
-void relocate_code(ulong start_addr_sp, gd_t *new_gd, ulong relocaaddr)
-{
-	/* TODO(sh maintainer): Implement this */
-	while (1);
 }

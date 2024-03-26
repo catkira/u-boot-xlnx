@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Command for accessing SPI flash.
  *
  * Copyright (C) 2008 Atmel Corporation
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -88,6 +87,8 @@ static int do_spi_flash_probe(int argc, char * const argv[])
 #ifdef CONFIG_DM_SPI_FLASH
 	struct udevice *new, *bus_dev;
 	int ret;
+	/* In DM mode defaults will be taken from DT */
+	speed = 0, mode = 0;
 #else
 	struct spi_flash *new;
 #endif
@@ -122,8 +123,7 @@ static int do_spi_flash_probe(int argc, char * const argv[])
 	/* Remove the old device, otherwise probe will just be a nop */
 	ret = spi_find_bus_and_cs(bus, cs, &bus_dev, &new);
 	if (!ret) {
-		device_remove(new);
-		device_unbind(new);
+		device_remove(new, DM_REMOVE_NORMAL);
 	}
 	flash = NULL;
 	ret = spi_flash_probe_bus_cs(bus, cs, speed, mode, &new);
@@ -286,7 +286,7 @@ static int do_spi_flash_read_write(int argc, char * const argv[])
 	}
 
 	buf = map_physmem(addr, len, MAP_WRBACK);
-	if (!buf) {
+	if (!buf && addr) {
 		puts("Failed to map physical memory\n");
 		return 1;
 	}

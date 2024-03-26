@@ -1,13 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (c) 2004-2008 Texas Instruments
  *
  * (C) Copyright 2002
  * Gary Jennejohn, DENX Software Engineering, <garyj@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
+#include <asm/psci.h>
 
 OUTPUT_FORMAT("elf32-littlearm", "elf32-littlearm", "elf32-littlearm")
 OUTPUT_ARCH(arm)
@@ -43,20 +43,43 @@ SECTIONS
 		*(.__image_copy_start)
 		*(.vectors)
 		CPUDIR/start.o (.text*)
+	}
+
+	/* This needs to come before *(.text*) */
+	.__efi_runtime_start : {
+		*(.__efi_runtime_start)
+	}
+
+	.efi_runtime : {
+		*(.text.efi_runtime*)
+		*(.rodata.efi_runtime*)
+		*(.data.efi_runtime*)
+	}
+
+	.__efi_runtime_stop : {
+		*(.__efi_runtime_stop)
+	}
+
+	.text_rest :
+	{
 		*(.text*)
 	}
 
 #ifdef CONFIG_ARMV7_NONSEC
 
+	/* Align the secure section only if we're going to use it in situ */
+	.__secure_start
+#ifndef CONFIG_ARMV7_SECURE_BASE
+		ALIGN(CONSTANT(COMMONPAGESIZE))
+#endif
+	: {
+		KEEP(*(.__secure_start))
+	}
+
 #ifndef CONFIG_ARMV7_SECURE_BASE
 #define CONFIG_ARMV7_SECURE_BASE
 #define __ARMV7_PSCI_STACK_IN_RAM
 #endif
-
-	.__secure_start : {
-		. = ALIGN(0x1000);
-		*(.__secure_start)
-	}
 
 	.secure_text CONFIG_ARMV7_SECURE_BASE :
 		AT(ADDR(.__secure_start) + SIZEOF(.__secure_start))
@@ -64,18 +87,50 @@ SECTIONS
 		*(._secure.text)
 	}
 
-	. = LOADADDR(.__secure_start) +
-		SIZEOF(.__secure_start) +
-		SIZEOF(.secure_text);
+	.secure_data : AT(LOADADDR(.secure_text) + SIZEOF(.secure_text))
+	{
+		*(._secure.data)
+	}
 
+#ifdef CONFIG_ARMV7_PSCI
+	.secure_stack ALIGN(ADDR(.secure_data) + SIZEOF(.secure_data),
+			    CONSTANT(COMMONPAGESIZE)) (NOLOAD) :
 #ifdef __ARMV7_PSCI_STACK_IN_RAM
-	/* Align to page boundary and skip 2 pages */
-	. = (. & ~ 0xfff) + 0x2000;
-#undef __ARMV7_PSCI_STACK_IN_RAM
+		AT(ADDR(.secure_stack))
+#else
+		AT(LOADADDR(.secure_data) + SIZEOF(.secure_data))
+#endif
+	{
+		KEEP(*(.__secure_stack_start))
+
+		/* Skip addreses for stack */
+		. = . + CONFIG_ARMV7_PSCI_NR_CPUS * ARM_PSCI_STACK_SIZE;
+
+		/* Align end of stack section to page boundary */
+		. = ALIGN(CONSTANT(COMMONPAGESIZE));
+
+		KEEP(*(.__secure_stack_end))
+
+#ifdef CONFIG_ARMV7_SECURE_MAX_SIZE
+		/*
+		 * We are not checking (__secure_end - __secure_start) here,
+		 * as these are the load addresses, and do not include the
+		 * stack section. Instead, use the end of the stack section
+		 * and the start of the text section.
+		 */
+		ASSERT((. - ADDR(.secure_text)) <= CONFIG_ARMV7_SECURE_MAX_SIZE,
+		       "Error: secure section exceeds secure memory size");
+#endif
+	}
+
+#ifndef __ARMV7_PSCI_STACK_IN_RAM
+	/* Reset VMA but don't allocate space if we have secure SRAM */
+	. = LOADADDR(.secure_stack);
 #endif
 
-	__secure_end_lma = .;
-	.__secure_end : AT(__secure_end_lma) {
+#endif
+
+	.__secure_end : AT(ADDR(.__secure_end)) {
 		*(.__secure_end)
 		LONG(0x1d1071c);	/* Must output something to reset LMA */
 	}
@@ -100,27 +155,14 @@ SECTIONS
 
 	. = ALIGN(4);
 
-	.__efi_runtime_start : {
-		*(.__efi_runtime_start)
-	}
-
-	.efi_runtime : {
-		*(efi_runtime_text)
-		*(efi_runtime_data)
-	}
-
-	.__efi_runtime_stop : {
-		*(.__efi_runtime_stop)
-	}
-
 	.efi_runtime_rel_start :
 	{
 		*(.__efi_runtime_rel_start)
 	}
 
 	.efi_runtime_rel : {
-		*(.relefi_runtime_text)
-		*(.relefi_runtime_data)
+		*(.rel*.efi_runtime)
+		*(.rel*.efi_runtime.*)
 	}
 
 	.efi_runtime_rel_stop :

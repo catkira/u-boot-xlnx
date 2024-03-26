@@ -1,14 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Common SPI Interface: Controller-specific definitions
  *
  * (C) Copyright 2001
  * Gerald Van Baren, Custom IDEAS, vanbaren@cideas.com.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef _SPI_H_
 #define _SPI_H_
+
+#include <common.h>
 
 /* SPI mode flags */
 #define SPI_CPHA	BIT(0)			/* clock phase */
@@ -56,10 +57,7 @@
 #define SPI_RX_FAST	BIT(1)			/* receive with 1 wire fast */
 #define SPI_RX_DUAL	BIT(2)			/* receive with 2 wires */
 #define SPI_RX_QUAD	BIT(3)			/* receive with 4 wires */
-
-/* SPI bus connection options - see enum spi_dual_flash */
-#define SPI_CONN_DUAL_SHARED		(1 << 0)
-#define SPI_CONN_DUAL_SEPARATED	(1 << 1)
+#define SPI_RX_OCTAL	BIT(4)
 
 /* Header byte that marks the start of the message */
 #define SPI_PREAMBLE_END_BYTE	0xec
@@ -85,13 +83,11 @@ struct dm_spi_bus {
  * @cs:		Chip select number (0..n-1)
  * @max_hz:	Maximum bus speed that this slave can tolerate
  * @mode:	SPI mode to use for this device (see SPI mode flags)
- * @mode_rx:	SPI RX mode to use for this slave (see SPI mode_rx flags)
  */
 struct dm_spi_slave_platdata {
 	unsigned int cs;
 	uint max_hz;
 	uint mode;
-	u8 mode_rx;
 };
 
 #endif /* CONFIG_DM_SPI */
@@ -118,14 +114,12 @@ struct dm_spi_slave_platdata {
  *			bus (bus->seq) so does not need to be stored
  * @cs:			ID of the chip select connected to the slave.
  * @mode:		SPI mode to use for this slave (see SPI mode flags)
- * @mode_rx:		SPI RX mode to use for this slave (see SPI mode_rx flags)
  * @wordlen:		Size of SPI word in number of bits
- * @op_mode_rx:		SPI RX operation mode.
- * @op_mode_tx:		SPI TX operation mode.
+ * @max_read_size:	If non-zero, the maximum number of bytes which can
+ *			be read at once.
  * @max_write_size:	If non-zero, the maximum number of bytes which can
- *			be written at once, excluding command bytes.
+ *			be written at once.
  * @memory_map:		Address of read-only SPI flash access.
- * @option:		Varies SPI bus options - separate, shared bus.
  * @flags:		Indication of SPI flags.
  */
 struct spi_slave {
@@ -138,16 +132,15 @@ struct spi_slave {
 	unsigned int cs;
 #endif
 	uint mode;
-	u8 mode_rx;
 	unsigned int wordlen;
-	u8 op_mode_rx;
-	u8 op_mode_tx;
+	unsigned int max_read_size;
 	unsigned int max_write_size;
 	void *memory_map;
 	u8 option;
 	u8 dio;
 	u32 bytemode;
 	u32 flags;
+	u8 dummy_bytes;
 #define SPI_XFER_BEGIN		BIT(0)	/* Assert CS before transfer */
 #define SPI_XFER_END		BIT(1)	/* Deassert CS after transfer */
 #define SPI_XFER_ONCE		(SPI_XFER_BEGIN | SPI_XFER_END)
@@ -155,13 +148,6 @@ struct spi_slave {
 #define SPI_XFER_MMAP_END	BIT(3)	/* Memory Mapped End */
 #define SPI_XFER_U_PAGE		BIT(4)
 };
-
-/**
- * Initialization, must be called once on start up.
- *
- * TODO: I don't think we really need this.
- */
-void spi_init(void);
 
 /**
  * spi_do_alloc_slave - Allocate a new SPI slave (internal)
@@ -357,33 +343,6 @@ static inline int spi_w8r8(struct spi_slave *slave, unsigned char byte)
 	return ret < 0 ? ret : din[1];
 }
 
-/**
- * Set up a SPI slave for a particular device tree node
- *
- * This calls spi_setup_slave() with the correct bus number. Call
- * spi_free_slave() to free it later.
- *
- * @param blob:		Device tree blob
- * @param slave_node:	Slave node to use
- * @param spi_node:	SPI peripheral node to use
- * @return pointer to new spi_slave structure
- */
-struct spi_slave *spi_setup_slave_fdt(const void *blob, int slave_node,
-				      int spi_node);
-
-/**
- * spi_base_setup_slave_fdt() - helper function to set up a SPI slace
- *
- * This decodes SPI properties from the slave node to determine the
- * chip select and SPI parameters.
- *
- * @blob:	Device tree blob
- * @busnum:	Bus number to use
- * @node:	Device tree node for the SPI bus
- */
-struct spi_slave *spi_base_setup_slave_fdt(const void *blob, int busnum,
-					   int node);
-
 #ifdef CONFIG_DM_SPI
 
 /**
@@ -469,6 +428,15 @@ struct dm_spi_ops {
 	 */
 	int (*xfer)(struct udevice *dev, unsigned int bitlen, const void *dout,
 		    void *din, unsigned long flags);
+
+	/**
+	 * Optimized handlers for SPI memory-like operations.
+	 *
+	 * Optimized/dedicated operations for interactions with SPI memory. This
+	 * field is optional and should only be implemented if the controller
+	 * has native support for memory like operations.
+	 */
+	const struct spi_controller_mem_ops *mem_ops;
 
 	/**
 	 * Set transfer speed.
@@ -604,7 +572,7 @@ int spi_find_chip_select(struct udevice *bus, int cs, struct udevice **devp);
  * @node:	Node offset to read from
  * @plat:	Place to put the decoded information
  */
-int spi_slave_ofdata_to_platdata(const void *blob, int node,
+int spi_slave_ofdata_to_platdata(struct udevice *dev,
 				 struct dm_spi_slave_platdata *plat);
 
 /**

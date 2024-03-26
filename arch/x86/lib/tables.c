@@ -1,13 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <smbios.h>
 #include <asm/sfi.h>
 #include <asm/mpspec.h>
-#include <asm/smbios.h>
 #include <asm/tables.h>
 #include <asm/acpi_table.h>
 #include <asm/coreboot_tables.h>
@@ -18,7 +17,7 @@
  * @addr:	start address to write the table
  * @return:	end address of the table
  */
-typedef u32 (*table_write)(u32 addr);
+typedef ulong (*table_write)(ulong addr);
 
 static table_write table_write_funcs[] = {
 #ifdef CONFIG_GENERATE_PIRQ_TABLE
@@ -37,18 +36,6 @@ static table_write table_write_funcs[] = {
 	write_smbios_table,
 #endif
 };
-
-u8 table_compute_checksum(void *v, int len)
-{
-	u8 *bytes = v;
-	u8 checksum = 0;
-	int i;
-
-	for (i = 0; i < len; i++)
-		checksum -= bytes[i];
-
-	return checksum;
-}
 
 void table_fill_string(char *dest, const char *src, size_t n, char pad)
 {

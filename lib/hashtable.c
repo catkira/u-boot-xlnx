@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-2.1+
 /*
  * This implementation is based on code from uClibc-0.9.30.3 but was
  * modified and extended for use within U-Boot.
@@ -9,8 +10,6 @@
  * Copyright (C) 1993, 1995, 1996, 1997, 2002 Free Software Foundation, Inc.
  * This file is part of the GNU C Library.
  * Contributed by Ulrich Drepper <drepper@gnu.ai.mit.edu>, 1993.
- *
- * SPDX-License-Identifier:	LGPL-2.1+
  */
 
 #include <errno.h>
@@ -477,11 +476,11 @@ int hdelete_r(const char *key, struct hsearch_data *htab, int flag)
 	return 1;
 }
 
+#if !(defined(CONFIG_SPL_BUILD) && !defined(CONFIG_SPL_SAVEENV))
 /*
  * hexport()
  */
 
-#ifndef CONFIG_SPL_BUILD
 /*
  * Export the data stored in the hash table in linearized form.
  *
@@ -499,7 +498,7 @@ int hdelete_r(const char *key, struct hsearch_data *htab, int flag)
  *
  * If the separator character is different from NUL, then any
  * separator characters and backslash characters in the values will
- * be escaped by a preceeding backslash in output. This is needed for
+ * be escaped by a preceding backslash in output. This is needed for
  * example to enable multi-line values, especially when the output
  * shall later be parsed (for example, for re-import).
  *
@@ -602,8 +601,8 @@ ssize_t hexport_r(struct hsearch_data *htab, const char sep, int flag,
 		return (-1);
 	}
 
-	debug("EXPORT  table = %p, htab.size = %d, htab.filled = %d, "
-		"size = %zu\n", htab, htab->size, htab->filled, size);
+	debug("EXPORT  table = %p, htab.size = %d, htab.filled = %d, size = %lu\n",
+	      htab, htab->size, htab->filled, (ulong)size);
 	/*
 	 * Pass 1:
 	 * search used entries,
@@ -623,7 +622,7 @@ ssize_t hexport_r(struct hsearch_data *htab, const char sep, int flag,
 
 			list[n++] = ep;
 
-			totlen += strlen(ep->key) + 2;
+			totlen += strlen(ep->key);
 
 			if (sep == '\0') {
 				totlen += strlen(ep->data);
@@ -657,8 +656,8 @@ ssize_t hexport_r(struct hsearch_data *htab, const char sep, int flag,
 	/* Check if the user supplied buffer size is sufficient */
 	if (size) {
 		if (size < totlen + 1) {	/* provided buffer too small */
-			printf("Env export buffer too small: %zu, "
-				"but need %zu\n", size, totlen + 1);
+			printf("Env export buffer too small: %lu, but need %lu\n",
+			       (ulong)size, (ulong)totlen + 1);
 			__set_errno(ENOMEM);
 			return (-1);
 		}
@@ -750,8 +749,11 @@ static int drop_var_from_set(const char *name, int nvars, char * vars[])
  *
  * The "flag" argument can be used to control the behaviour: when the
  * H_NOCLEAR bit is set, then an existing hash table will kept, i. e.
- * new data will be added to an existing hash table; otherwise, old
- * data will be discarded and a new hash table will be created.
+ * new data will be added to an existing hash table; otherwise, if no
+ * vars are passed, old data will be discarded and a new hash table
+ * will be created. If vars are passed, passed vars that are not in
+ * the linear list of "name=value" pairs will be removed from the
+ * current hash table.
  *
  * The separator character for the "name=value" pairs can be selected,
  * so we both support importing from externally stored environment
@@ -790,7 +792,7 @@ int himport_r(struct hsearch_data *htab,
 
 	/* we allocate new space to make sure we can write to the array */
 	if ((data = malloc(size + 1)) == NULL) {
-		debug("himport_r: can't malloc %zu bytes\n", size + 1);
+		debug("himport_r: can't malloc %lu bytes\n", (ulong)size + 1);
 		__set_errno(ENOMEM);
 		return 0;
 	}
@@ -802,7 +804,7 @@ int himport_r(struct hsearch_data *htab,
 	if (nvars)
 		memcpy(localvars, vars, sizeof(vars[0]) * nvars);
 
-	if ((flag & H_NOCLEAR) == 0) {
+	if ((flag & H_NOCLEAR) == 0 && !nvars) {
 		/* Destroy old hash table if one exists */
 		debug("Destroy Hash Table: %p table = %p\n", htab,
 		       htab->table);
@@ -822,7 +824,7 @@ int himport_r(struct hsearch_data *htab,
 	 * (CONFIG_ENV_SIZE).  This heuristics will result in
 	 * unreasonably large numbers (and thus memory footprint) for
 	 * big flash environments (>8,000 entries for 64 KB
-	 * envrionment size), so we clip it to a reasonable value.
+	 * environment size), so we clip it to a reasonable value.
 	 * On the other hand we need to add some more entries for free
 	 * space when importing very small buffers. Both boundaries can
 	 * be overwritten in the board config file if needed.
@@ -934,6 +936,9 @@ int himport_r(struct hsearch_data *htab,
 	debug("INSERT: free(data = %p)\n", data);
 	free(data);
 
+	if (flag & H_NOCLEAR)
+		goto end;
+
 	/* process variables which were not considered */
 	for (i = 0; i < nvars; i++) {
 		if (localvars[i] == NULL)
@@ -952,6 +957,7 @@ int himport_r(struct hsearch_data *htab,
 			printf("WARNING: '%s' not in imported env, deleting it!\n", localvars[i]);
 	}
 
+end:
 	debug("INSERT: done\n");
 	return 1;		/* everything OK */
 }

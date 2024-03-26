@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * epautoconf.c -- endpoint autoconfiguration for usb gadget drivers
  *
  * Copyright (C) 2004 David Brownell
- *
- * SPDX-License-Identifier:	GPL-2.0+
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * Ported to U-Boot by: Thomas Smits <ts.smits@gmail.com> and
  *                      Remy Bohmer <linux@bohmer.net>
@@ -13,7 +10,7 @@
 
 #include <common.h>
 #include <linux/usb/ch9.h>
-#include <asm/errno.h>
+#include <linux/errno.h>
 #include <linux/usb/gadget.h>
 #include <asm/unaligned.h>
 #include "gadget_chips.h"

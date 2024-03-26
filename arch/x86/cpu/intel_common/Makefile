@@ -1,16 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0+
 #
 # Copyright (c) 2016 Google, Inc
-#
-# SPDX-License-Identifier:	GPL-2.0+
-#
 
-obj-$(CONFIG_HAVE_MRC) += car.o
+ifdef CONFIG_HAVE_MRC
+obj-$(CONFIG_$(SPL_)X86_32BIT_INIT) += car.o
+obj-$(CONFIG_$(SPL_)X86_32BIT_INIT) += me_status.o
+obj-$(CONFIG_$(SPL_)X86_32BIT_INIT) += report_platform.o
+obj-$(CONFIG_$(SPL_)X86_32BIT_INIT) += mrc.o
+endif
 obj-y += cpu.o
 obj-y += lpc.o
-obj-$(CONFIG_HAVE_MRC) += me_status.o
-ifndef CONFIG_TARGET_EFI
+ifndef CONFIG_TARGET_EFI_APP
 obj-y += microcode.o
 endif
 obj-y += pch.o
-obj-$(CONFIG_HAVE_MRC) += report_platform.o
-obj-$(CONFIG_HAVE_MRC) += mrc.o

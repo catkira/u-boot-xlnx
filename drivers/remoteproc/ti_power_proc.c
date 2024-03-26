@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2015-2016
  * Texas Instruments Incorporated - http://www.ti.com/
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #define pr_fmt(fmt) "%s: " fmt, __func__
 #include <common.h>
@@ -33,7 +33,7 @@ struct ti_powerproc_privdata {
 static int ti_of_to_priv(struct udevice *dev,
 			 struct ti_powerproc_privdata *priv)
 {
-	int node = dev->of_offset;
+	int node = dev_of_offset(dev);
 	const void *blob = gd->fdt_blob;
 	int tmp;
 

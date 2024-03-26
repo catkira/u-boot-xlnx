@@ -1,66 +1,142 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2014 - 2015 Xilinx, Inc.
  * Michal Simek <michal.simek@xilinx.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
+#include <uboot_aes.h>
 #include <sata.h>
 #include <ahci.h>
 #include <scsi.h>
 #include <malloc.h>
+#include <wdt.h>
 #include <asm/arch/clk.h>
 #include <asm/arch/hardware.h>
 #include <asm/arch/sys_proto.h>
+#include <asm/arch/psu_init_gpl.h>
 #include <asm/io.h>
+#include <dm/device.h>
+#include <dm/uclass.h>
 #include <usb.h>
 #include <dwc3-uboot.h>
 #include <zynqmppl.h>
-#include <i2c.h>
 #include <g_dnl.h>
+#include <linux/sizes.h>
+
+#include "pm_cfg_obj.h"
 
 DECLARE_GLOBAL_DATA_PTR;
+
+#if !defined(CONFIG_SPL_BUILD) && defined(CONFIG_WDT)
+static struct udevice *watchdog_dev;
+#endif
 
 #if defined(CONFIG_FPGA) && defined(CONFIG_FPGA_ZYNQMPPL) && \
     !defined(CONFIG_SPL_BUILD)
 static xilinx_desc zynqmppl = XILINX_ZYNQMP_DESC;
 
 static const struct {
-	uint32_t id;
+	u32 id;
+	u32 ver;
 	char *name;
+	bool evexists;
 } zynqmp_devices[] = {
 	{
 		.id = 0x10,
 		.name = "3eg",
 	},
 	{
+		.id = 0x10,
+		.ver = 0x2c,
+		.name = "3cg",
+	},
+	{
 		.id = 0x11,
 		.name = "2eg",
 	},
 	{
+		.id = 0x11,
+		.ver = 0x2c,
+		.name = "2cg",
+	},
+	{
 		.id = 0x20,
 		.name = "5ev",
+		.evexists = 1,
+	},
+	{
+		.id = 0x20,
+		.ver = 0x100,
+		.name = "5eg",
+		.evexists = 1,
+	},
+	{
+		.id = 0x20,
+		.ver = 0x12c,
+		.name = "5cg",
+		.evexists = 1,
 	},
 	{
 		.id = 0x21,
 		.name = "4ev",
+		.evexists = 1,
+	},
+	{
+		.id = 0x21,
+		.ver = 0x100,
+		.name = "4eg",
+		.evexists = 1,
+	},
+	{
+		.id = 0x21,
+		.ver = 0x12c,
+		.name = "4cg",
+		.evexists = 1,
 	},
 	{
 		.id = 0x30,
 		.name = "7ev",
+		.evexists = 1,
+	},
+	{
+		.id = 0x30,
+		.ver = 0x100,
+		.name = "7eg",
+		.evexists = 1,
+	},
+	{
+		.id = 0x30,
+		.ver = 0x12c,
+		.name = "7cg",
+		.evexists = 1,
 	},
 	{
 		.id = 0x38,
 		.name = "9eg",
 	},
 	{
+		.id = 0x38,
+		.ver = 0x2c,
+		.name = "9cg",
+	},
+	{
 		.id = 0x39,
 		.name = "6eg",
 	},
 	{
+		.id = 0x39,
+		.ver = 0x2c,
+		.name = "6cg",
+	},
+	{
 		.id = 0x40,
 		.name = "11eg",
+	},
+	{ /* For testing purpose only */
+		.id = 0x50,
+		.ver = 0x2c,
+		.name = "15cg",
 	},
 	{
 		.id = 0x50,
@@ -74,75 +150,273 @@ static const struct {
 		.id = 0x59,
 		.name = "17eg",
 	},
+	{
+		.id = 0x61,
+		.name = "21dr",
+	},
+	{
+		.id = 0x63,
+		.name = "23dr",
+	},
+	{
+		.id = 0x65,
+		.name = "25dr",
+	},
+	{
+		.id = 0x64,
+		.name = "27dr",
+	},
+	{
+		.id = 0x60,
+		.name = "28dr",
+	},
+	{
+		.id = 0x62,
+		.name = "29dr",
+	},
+	{
+		.id = 0x66,
+		.name = "39dr",
+	},
+	{
+		.id = 0x7b,
+		.name = "48dr",
+	},
+	{
+		.id = 0x7e,
+		.name = "49dr",
+	},
 };
+#endif
 
-static int chip_id(void)
+int chip_id(unsigned char id)
 {
 	struct pt_regs regs;
-	regs.regs[0] = ZYNQMP_SIP_SVC_CSU_DMA_CHIPID;
-	regs.regs[1] = 0;
-	regs.regs[2] = 0;
-	regs.regs[3] = 0;
+	int val = -EINVAL;
 
-	smc_call(&regs);
+	if (current_el() != 3) {
+		regs.regs[0] = ZYNQMP_SIP_SVC_CSU_DMA_CHIPID;
+		regs.regs[1] = 0;
+		regs.regs[2] = 0;
+		regs.regs[3] = 0;
 
-	/*
-	 * SMC returns:
-	 * regs[0][31:0]  = status of the operation
-	 * regs[0][63:32] = CSU.IDCODE register
-	 * regs[1][31:0]  = CSU.version register
-	 */
-	regs.regs[0] = upper_32_bits(regs.regs[0]);
-	regs.regs[0] &= ZYNQMP_CSU_IDCODE_DEVICE_CODE_MASK |
-			ZYNQMP_CSU_IDCODE_SVD_MASK;
-	regs.regs[0] >>= ZYNQMP_CSU_IDCODE_SVD_SHIFT;
+		smc_call(&regs);
 
-	return regs.regs[0];
+		/*
+		 * SMC returns:
+		 * regs[0][31:0]  = status of the operation
+		 * regs[0][63:32] = CSU.IDCODE register
+		 * regs[1][31:0]  = CSU.version register
+		 * regs[1][63:32] = CSU.IDCODE2 register
+		 */
+		switch (id) {
+		case IDCODE:
+			regs.regs[0] = upper_32_bits(regs.regs[0]);
+			regs.regs[0] &= ZYNQMP_CSU_IDCODE_DEVICE_CODE_MASK |
+					ZYNQMP_CSU_IDCODE_SVD_MASK;
+			regs.regs[0] >>= ZYNQMP_CSU_IDCODE_SVD_SHIFT;
+			val = regs.regs[0];
+			break;
+		case VERSION:
+			regs.regs[1] = lower_32_bits(regs.regs[1]);
+			regs.regs[1] &= ZYNQMP_CSU_SILICON_VER_MASK;
+			val = regs.regs[1];
+			break;
+		case IDCODE2:
+			regs.regs[1] = lower_32_bits(regs.regs[1]);
+			regs.regs[1] >>= ZYNQMP_CSU_VERSION_EMPTY_SHIFT;
+			val = regs.regs[1];
+			break;
+		default:
+			printf("%s, Invalid Req:0x%x\n", __func__, id);
+		}
+	} else {
+		switch (id) {
+		case IDCODE:
+			val = readl(ZYNQMP_CSU_IDCODE_ADDR);
+			val &= ZYNQMP_CSU_IDCODE_DEVICE_CODE_MASK |
+			       ZYNQMP_CSU_IDCODE_SVD_MASK;
+			val >>= ZYNQMP_CSU_IDCODE_SVD_SHIFT;
+			break;
+		case VERSION:
+			val = readl(ZYNQMP_CSU_VER_ADDR);
+			val &= ZYNQMP_CSU_SILICON_VER_MASK;
+			break;
+		default:
+			printf("%s, Invalid Req:0x%x\n", __func__, id);
+		}
+	}
+
+	return val;
 }
 
+#define ZYNQMP_VERSION_SIZE		9
+#define ZYNQMP_PL_STATUS_BIT		9
+#define ZYNQMP_IPDIS_VCU_BIT		8
+#define ZYNQMP_PL_STATUS_MASK		BIT(ZYNQMP_PL_STATUS_BIT)
+#define ZYNQMP_CSU_VERSION_MASK		~(ZYNQMP_PL_STATUS_MASK)
+#define ZYNQMP_CSU_VCUDIS_VER_MASK	ZYNQMP_CSU_VERSION_MASK & \
+					~BIT(ZYNQMP_IPDIS_VCU_BIT)
+#define MAX_VARIANTS_EV			3
+
+#if defined(CONFIG_FPGA) && defined(CONFIG_FPGA_ZYNQMPPL) && \
+	!defined(CONFIG_SPL_BUILD)
 static char *zynqmp_get_silicon_idcode_name(void)
 {
-	uint32_t i, id;
+	u32 i, id, ver, j;
+	char *buf;
+	static char name[ZYNQMP_VERSION_SIZE];
 
-	id = chip_id();
+	id = chip_id(IDCODE);
+	ver = chip_id(IDCODE2);
+
 	for (i = 0; i < ARRAY_SIZE(zynqmp_devices); i++) {
-		if (zynqmp_devices[i].id == id)
-			return zynqmp_devices[i].name;
+		if (zynqmp_devices[i].id == id) {
+			if (zynqmp_devices[i].evexists &&
+			    !(ver & ZYNQMP_PL_STATUS_MASK))
+				break;
+			if (zynqmp_devices[i].ver == (ver &
+			    ZYNQMP_CSU_VERSION_MASK))
+				break;
+		}
 	}
-	return "unknown";
+
+	if (i >= ARRAY_SIZE(zynqmp_devices))
+		return "unknown";
+
+	strncat(name, "zu", 2);
+	if (!zynqmp_devices[i].evexists ||
+	    (ver & ZYNQMP_PL_STATUS_MASK)) {
+		strncat(name, zynqmp_devices[i].name,
+			ZYNQMP_VERSION_SIZE - 3);
+		return name;
+	}
+
+	/*
+	 * Here we are means, PL not powered up and ev variant
+	 * exists. So, we need to ignore VCU disable bit(8) in
+	 * version and findout if its CG or EG/EV variant.
+	 */
+	for (j = 0; j < MAX_VARIANTS_EV; j++, i++) {
+		if ((zynqmp_devices[i].ver & ~BIT(ZYNQMP_IPDIS_VCU_BIT)) ==
+		    (ver & ZYNQMP_CSU_VCUDIS_VER_MASK)) {
+			strncat(name, zynqmp_devices[i].name,
+				ZYNQMP_VERSION_SIZE - 3);
+			break;
+		}
+	}
+
+	if (j >= MAX_VARIANTS_EV)
+		return "unknown";
+
+	if (strstr(name, "eg") || strstr(name, "ev")) {
+		buf = strstr(name, "e");
+		*buf = '\0';
+	}
+
+	return name;
 }
 #endif
 
-#define ZYNQMP_VERSION_SIZE	9
+int board_early_init_f(void)
+{
+	int ret = 0;
+#if !defined(CONFIG_SPL_BUILD) && defined(CONFIG_CLK_ZYNQMP)
+	u32 pm_api_version;
+
+	pm_api_version = zynqmp_pmufw_version();
+	printf("PMUFW:\tv%d.%d\n",
+	       pm_api_version >> ZYNQMP_PM_VERSION_MAJOR_SHIFT,
+	       pm_api_version & ZYNQMP_PM_VERSION_MINOR_MASK);
+
+	if (pm_api_version < ZYNQMP_PM_VERSION)
+		panic("PMUFW version error. Expected: v%d.%d\n",
+		      ZYNQMP_PM_VERSION_MAJOR, ZYNQMP_PM_VERSION_MINOR);
+#endif
+
+#if defined(CONFIG_ZYNQMP_PSU_INIT_ENABLED)
+	ret = psu_init();
+#endif
+
+#if defined(CONFIG_WDT) && !defined(CONFIG_SPL_BUILD)
+	/* bss is not cleared at time when watchdog_reset() is called */
+	watchdog_dev = NULL;
+#endif
+
+	return ret;
+}
 
 int board_init(void)
 {
+#if defined(CONFIG_SPL_BUILD)
+	/* Check *at build time* if the filename is an non-empty string */
+	if (sizeof(CONFIG_ZYNQMP_SPL_PM_CFG_OBJ_FILE) > 1)
+		zynqmp_pmufw_load_config_object(zynqmp_pm_cfg_obj,
+						zynqmp_pm_cfg_obj_size);
+#endif
+
 	printf("EL Level:\tEL%d\n", current_el());
 
 #if defined(CONFIG_FPGA) && defined(CONFIG_FPGA_ZYNQMPPL) && \
     !defined(CONFIG_SPL_BUILD) || (defined(CONFIG_SPL_FPGA_SUPPORT) && \
     defined(CONFIG_SPL_BUILD))
 	if (current_el() != 3) {
-		static char version[ZYNQMP_VERSION_SIZE];
-
-		strncat(version, "xczu", ZYNQMP_VERSION_SIZE);
-		zynqmppl.name = strncat(version,
-					zynqmp_get_silicon_idcode_name(),
-					ZYNQMP_VERSION_SIZE);
+		zynqmppl.name = zynqmp_get_silicon_idcode_name();
 		printf("Chip ID:\t%s\n", zynqmppl.name);
 		fpga_init();
 		fpga_add(fpga_xilinx, &zynqmppl);
 	}
 #endif
 
+#if !defined(CONFIG_SPL_BUILD) && defined(CONFIG_WDT)
+	if (uclass_get_device_by_seq(UCLASS_WDT, 0, &watchdog_dev)) {
+		debug("Watchdog: Not found by seq!\n");
+		if (uclass_get_device(UCLASS_WDT, 0, &watchdog_dev)) {
+			puts("Watchdog: Not found!\n");
+			return 0;
+		}
+	}
+
+	wdt_start(watchdog_dev, 0, 0);
+	puts("Watchdog: Started\n");
+#endif
+
 	return 0;
 }
+
+#ifdef CONFIG_WATCHDOG
+/* Called by macro WATCHDOG_RESET */
+void watchdog_reset(void)
+{
+# if !defined(CONFIG_SPL_BUILD)
+	static ulong next_reset;
+	ulong now;
+
+	if (!watchdog_dev)
+		return;
+
+	now = timer_get_us();
+
+	/* Do not reset the watchdog too often */
+	if (now > next_reset) {
+		wdt_reset(watchdog_dev);
+		next_reset = now + 1000;
+	}
+# endif
+}
+#endif
 
 int board_early_init_r(void)
 {
 	u32 val;
 
-	if (current_el() == 3) {
+	if (current_el() != 3)
+		return 0;
+
+	val = readl(&crlapb_base->timestamp_ref_ctrl);
+	val &= ZYNQMP_CRL_APB_TIMESTAMP_REF_CTRL_CLKACT;
+
+	if (!val) {
 		val = readl(&crlapb_base->timestamp_ref_ctrl);
 		val |= ZYNQMP_CRL_APB_TIMESTAMP_REF_CTRL_CLKACT;
 		writel(val, &crlapb_base->timestamp_ref_ctrl);
@@ -154,154 +428,64 @@ int board_early_init_r(void)
 		writel(ZYNQMP_IOU_SCNTR_COUNTER_CONTROL_REGISTER_EN,
 		       &iou_scntr_secure->counter_control_register);
 	}
-	/* Program freq register in System counter and enable system counter */
-	writel(gd->cpu_clk, &iou_scntr->base_frequency_id_register);
-	writel(ZYNQMP_IOU_SCNTR_COUNTER_CONTROL_REGISTER_HDBG |
-	       ZYNQMP_IOU_SCNTR_COUNTER_CONTROL_REGISTER_EN,
-	       &iou_scntr->counter_control_register);
-
 	return 0;
 }
 
-int zynq_board_read_rom_ethaddr(unsigned char *ethaddr)
+unsigned long do_go_exec(ulong (*entry)(int, char * const []), int argc,
+			 char * const argv[])
 {
-#if defined(CONFIG_ZYNQ_GEM_EEPROM_ADDR) && \
-    defined(CONFIG_ZYNQ_GEM_I2C_MAC_OFFSET) && \
-    defined(CONFIG_ZYNQ_EEPROM_BUS)
-	i2c_set_bus_num(CONFIG_ZYNQ_EEPROM_BUS);
+	int ret = 0;
 
-	if (eeprom_read(CONFIG_ZYNQ_GEM_EEPROM_ADDR,
-			CONFIG_ZYNQ_GEM_I2C_MAC_OFFSET,
-			ethaddr, 6))
-		printf("I2C EEPROM MAC address read failed\n");
-#endif
-
-	return 0;
+	if (current_el() > 1) {
+		smp_kick_all_cpus();
+		dcache_disable();
+		armv8_switch_to_el1(0x0, 0, 0, 0, (unsigned long)entry,
+				    ES_TO_AARCH64);
+	} else {
+		printf("FAIL: current EL is not above EL1\n");
+		ret = EINVAL;
+	}
+	return ret;
 }
 
 #if !defined(CONFIG_SYS_SDRAM_BASE) && !defined(CONFIG_SYS_SDRAM_SIZE)
-/*
- * fdt_get_reg - Fill buffer by information from DT
- */
-static phys_size_t fdt_get_reg(const void *fdt, int nodeoffset, void *buf,
-			       const u32 *cell, int n)
+int dram_init_banksize(void)
 {
-	int i = 0, b, banks;
-	int parent_offset = fdt_parent_offset(fdt, nodeoffset);
-	int address_cells = fdt_address_cells(fdt, parent_offset);
-	int size_cells = fdt_size_cells(fdt, parent_offset);
-	char *p = buf;
-	u64 val;
-	u64 vals;
+	int ret;
 
-	debug("%s: addr_cells=%x, size_cell=%x, buf=%p, cell=%p\n",
-	      __func__, address_cells, size_cells, buf, cell);
+	ret = fdtdec_setup_memory_banksize();
+	if (ret)
+		return ret;
 
-	/* Check memory bank setup */
-	banks = n % (address_cells + size_cells);
-	if (banks)
-		panic("Incorrect memory setup cells=%d, ac=%d, sc=%d\n",
-		      n, address_cells, size_cells);
+	mem_map_fill();
 
-	banks = n / (address_cells + size_cells);
-
-	for (b = 0; b < banks; b++) {
-		debug("%s: Bank #%d:\n", __func__, b);
-		if (address_cells == 2) {
-			val = cell[i + 1];
-			val <<= 32;
-			val |= cell[i];
-			val = fdt64_to_cpu(val);
-			debug("%s: addr64=%llx, ptr=%p, cell=%p\n",
-			      __func__, val, p, &cell[i]);
-			*(phys_addr_t *)p = val;
-		} else {
-			debug("%s: addr32=%x, ptr=%p\n",
-			      __func__, fdt32_to_cpu(cell[i]), p);
-			*(phys_addr_t *)p = fdt32_to_cpu(cell[i]);
-		}
-		p += sizeof(phys_addr_t);
-		i += address_cells;
-
-		debug("%s: pa=%p, i=%x, size=%zu\n", __func__, p, i,
-		      sizeof(phys_addr_t));
-
-		if (size_cells == 2) {
-			vals = cell[i + 1];
-			vals <<= 32;
-			vals |= cell[i];
-			vals = fdt64_to_cpu(vals);
-
-			debug("%s: size64=%llx, ptr=%p, cell=%p\n",
-			      __func__, vals, p, &cell[i]);
-			*(phys_size_t *)p = vals;
-		} else {
-			debug("%s: size32=%x, ptr=%p\n",
-			      __func__, fdt32_to_cpu(cell[i]), p);
-			*(phys_size_t *)p = fdt32_to_cpu(cell[i]);
-		}
-		p += sizeof(phys_size_t);
-		i += size_cells;
-
-		debug("%s: ps=%p, i=%x, size=%zu\n",
-		      __func__, p, i, sizeof(phys_size_t));
-	}
-
-	/* Return the first address size */
-	return *(phys_size_t *)((char *)buf + sizeof(phys_addr_t));
-}
-
-#define FDT_REG_SIZE  sizeof(u32)
-/* Temp location for sharing data for storing */
-/* Up to 64-bit address + 64-bit size */
-static u8 tmp[CONFIG_NR_DRAM_BANKS * 16];
-
-void dram_init_banksize(void)
-{
-	int bank;
-
-	memcpy(&gd->bd->bi_dram[0], &tmp, sizeof(tmp));
-
-	for (bank = 0; bank < CONFIG_NR_DRAM_BANKS; bank++) {
-		debug("Bank #%d: start %llx\n", bank,
-		      (unsigned long long)gd->bd->bi_dram[bank].start);
-		debug("Bank #%d: size %llx\n", bank,
-		      (unsigned long long)gd->bd->bi_dram[bank].size);
-	}
+	return 0;
 }
 
 int dram_init(void)
 {
-	int node, len;
-	const void *blob = gd->fdt_blob;
-	const u32 *cell;
-
-	memset(&tmp, 0, sizeof(tmp));
-
-	/* find or create "/memory" node. */
-	node = fdt_subnode_offset(blob, 0, "memory");
-	if (node < 0) {
-		printf("%s: Can't get memory node\n", __func__);
-		return node;
-	}
-
-	/* Get pointer to cells and lenght of it */
-	cell = fdt_getprop(blob, node, "reg", &len);
-	if (!cell) {
-		printf("%s: Can't get reg property\n", __func__);
-		return -1;
-	}
-
-	gd->ram_size = fdt_get_reg(blob, node, &tmp, cell, len / FDT_REG_SIZE);
-
-	debug("%s: Initial DRAM size %llx\n", __func__, (u64)gd->ram_size);
+	if (fdtdec_setup_mem_size_base() != 0)
+		return -EINVAL;
 
 	return 0;
 }
 #else
+int dram_init_banksize(void)
+{
+#if defined(CONFIG_NR_DRAM_BANKS)
+	gd->bd->bi_dram[0].start = CONFIG_SYS_SDRAM_BASE;
+	gd->bd->bi_dram[0].size = get_effective_memsize();
+#endif
+
+	mem_map_fill();
+
+	return 0;
+}
+
 int dram_init(void)
 {
-	gd->ram_size = CONFIG_SYS_SDRAM_SIZE;
+	gd->ram_size = get_ram_size((void *)CONFIG_SYS_SDRAM_BASE,
+				    CONFIG_SYS_SDRAM_SIZE);
 
 	return 0;
 }
@@ -311,44 +495,116 @@ void reset_cpu(ulong addr)
 {
 }
 
-#ifdef CONFIG_SCSI_AHCI_PLAT
-void scsi_init(void)
+#if defined(CONFIG_BOARD_LATE_INIT)
+static const struct {
+	u32 bit;
+	const char *name;
+} reset_reasons[] = {
+	{ RESET_REASON_DEBUG_SYS, "DEBUG" },
+	{ RESET_REASON_SOFT, "SOFT" },
+	{ RESET_REASON_SRST, "SRST" },
+	{ RESET_REASON_PSONLY, "PS-ONLY" },
+	{ RESET_REASON_PMU, "PMU" },
+	{ RESET_REASON_INTERNAL, "INTERNAL" },
+	{ RESET_REASON_EXTERNAL, "EXTERNAL" },
+	{}
+};
+
+static int reset_reason(void)
 {
-#if defined(CONFIG_SATA_CEVA)
-	init_sata(0);
-#endif
-	ahci_init((void __iomem *)ZYNQMP_SATA_BASEADDR);
-	scsi_scan(1);
+	u32 reg;
+	int i, ret;
+	const char *reason = NULL;
+
+	ret = zynqmp_mmio_read((ulong)&crlapb_base->reset_reason, &reg);
+	if (ret)
+		return -EINVAL;
+
+	puts("Reset reason:\t");
+
+	for (i = 0; i < ARRAY_SIZE(reset_reasons); i++) {
+		if (reg & reset_reasons[i].bit) {
+			reason = reset_reasons[i].name;
+			printf("%s ", reset_reasons[i].name);
+			break;
+		}
+	}
+
+	puts("\n");
+
+	env_set("reset_reason", reason);
+
+	ret = zynqmp_mmio_write(~0, ~0, (ulong)&crlapb_base->reset_reason);
+	if (ret)
+		return -EINVAL;
+
+	return ret;
 }
-#endif
+
+static int set_fdtfile(void)
+{
+	char *compatible, *fdtfile;
+	const char *suffix = ".dtb";
+	const char *vendor = "xilinx/";
+
+	if (env_get("fdtfile"))
+		return 0;
+
+	compatible = (char *)fdt_getprop(gd->fdt_blob, 0, "compatible", NULL);
+	if (compatible) {
+		debug("Compatible: %s\n", compatible);
+
+		/* Discard vendor prefix */
+		strsep(&compatible, ",");
+
+		fdtfile = calloc(1, strlen(vendor) + strlen(compatible) +
+				 strlen(suffix) + 1);
+		if (!fdtfile)
+			return -ENOMEM;
+
+		sprintf(fdtfile, "%s%s%s", vendor, compatible, suffix);
+
+		env_set("fdtfile", fdtfile);
+		free(fdtfile);
+	}
+
+	return 0;
+}
 
 int board_late_init(void)
 {
-	u32 ver, reg = 0;
+	u32 reg = 0;
 	u8 bootmode;
+	struct udevice *dev;
+	int bootseq = -1;
+	int bootseq_len = 0;
+	int env_targets_len = 0;
 	const char *mode;
 	char *new_targets;
+	char *env_targets;
+	int ret;
+	ulong initrd_hi;
+
+#if defined(CONFIG_USB_ETHER) && !defined(CONFIG_USB_GADGET_DOWNLOAD)
+	usb_ether_init();
+#endif
 
 	if (!(gd->flags & GD_FLG_ENV_DEFAULT)) {
 		debug("Saved variables - Skipping\n");
 		return 0;
 	}
 
-	ver = zynqmp_get_silicon_version();
+	ret = set_fdtfile();
+	if (ret)
+		return ret;
 
-	switch (ver) {
-	case ZYNQMP_CSU_VERSION_VELOCE:
-		setenv("setup", "setenv baudrate 4800 && setenv bootcmd run veloce");
-	case ZYNQMP_CSU_VERSION_EP108:
-	case ZYNQMP_CSU_VERSION_SILICON:
-		setenv("setup", "setenv partid auto");
-		break;
-	case ZYNQMP_CSU_VERSION_QEMU:
-	default:
-		setenv("setup", "setenv partid 0");
-	}
+	ret = zynqmp_mmio_read((ulong)&crlapb_base->boot_mode, &reg);
+	if (ret)
+		return -EINVAL;
 
-	reg = readl(&crlapb_base->boot_mode);
+	if (reg >> BOOT_MODE_ALT_SHIFT)
+		reg >>= BOOT_MODE_ALT_SHIFT;
+
 	bootmode = reg & BOOT_MODES_MASK;
 
 	puts("Bootmode: ");
@@ -356,46 +612,63 @@ int board_late_init(void)
 	case USB_MODE:
 		puts("USB_MODE\n");
 		mode = "usb";
-		setenv("modeboot", "usb_dfu_spl");
+		env_set("modeboot", "usb_dfu_spl");
 		break;
 	case JTAG_MODE:
 		puts("JTAG_MODE\n");
-		mode = "pxe dhcp";
-		setenv("modeboot", "jtagboot");
+		mode = "jtag pxe dhcp";
+		env_set("modeboot", "jtagboot");
 		break;
 	case QSPI_MODE_24BIT:
 	case QSPI_MODE_32BIT:
 		mode = "qspi0";
 		puts("QSPI_MODE\n");
-		setenv("modeboot", "qspiboot");
+		env_set("modeboot", "qspiboot");
 		break;
 	case EMMC_MODE:
 		puts("EMMC_MODE\n");
 		mode = "mmc0";
-		setenv("modeboot", "sdboot");
+		env_set("modeboot", "emmcboot");
 		break;
 	case SD_MODE:
 		puts("SD_MODE\n");
-		mode = "mmc0";
-		setenv("modeboot", "sdboot");
+		if (uclass_get_device_by_name(UCLASS_MMC,
+					      "mmc@ff160000", &dev) &&
+		    uclass_get_device_by_name(UCLASS_MMC,
+					      "sdhci@ff160000", &dev)) {
+			puts("Boot from SD0 but without SD0 enabled!\n");
+			return -1;
+		}
+		debug("mmc0 device found at %p, seq %d\n", dev, dev->seq);
+
+		mode = "mmc";
+		bootseq = dev->seq;
+		env_set_ulong("sdbootdev", bootseq);
+		env_set("modeboot", "sdboot");
 		break;
 	case SD1_LSHFT_MODE:
 		puts("LVL_SHFT_");
 		/* fall through */
 	case SD_MODE1:
 		puts("SD_MODE1\n");
-#if defined(CONFIG_ZYNQ_SDHCI0) && defined(CONFIG_ZYNQ_SDHCI1)
-		mode = "mmc1";
-		setenv("sdbootdev", "1");
-#else
-		mode = "mmc0";
-#endif
-		setenv("modeboot", "sdboot");
+		if (uclass_get_device_by_name(UCLASS_MMC,
+					      "mmc@ff170000", &dev) &&
+		    uclass_get_device_by_name(UCLASS_MMC,
+					      "sdhci@ff170000", &dev)) {
+			puts("Boot from SD1 but without SD1 enabled!\n");
+			return -1;
+		}
+		debug("mmc1 device found at %p, seq %d\n", dev, dev->seq);
+
+		mode = "mmc";
+		bootseq = dev->seq;
+		env_set_ulong("sdbootdev", bootseq);
+		env_set("modeboot", "sdboot");
 		break;
 	case NAND_MODE:
 		puts("NAND_MODE\n");
 		mode = "nand0";
-		setenv("modeboot", "nandboot");
+		env_set("modeboot", "nandboot");
 		break;
 	default:
 		mode = "";
@@ -403,18 +676,42 @@ int board_late_init(void)
 		break;
 	}
 
+	if (bootseq >= 0) {
+		bootseq_len = snprintf(NULL, 0, "%i", bootseq);
+		debug("Bootseq len: %x\n", bootseq_len);
+	}
+
 	/*
 	 * One terminating char + one byte for space between mode
 	 * and default boot_targets
 	 */
-	new_targets = calloc(1, strlen(mode) +
-				strlen(getenv("boot_targets")) + 2);
+	env_targets = env_get("boot_targets");
+	if (env_targets)
+		env_targets_len = strlen(env_targets);
 
-	sprintf(new_targets, "%s %s", mode, getenv("boot_targets"));
-	setenv("boot_targets", new_targets);
+	new_targets = calloc(1, strlen(mode) + env_targets_len + 2 +
+			     bootseq_len);
+	if (!new_targets)
+		return -ENOMEM;
+
+	if (bootseq >= 0)
+		sprintf(new_targets, "%s%x %s", mode, bootseq,
+			env_targets ? env_targets : "");
+	else
+		sprintf(new_targets, "%s %s", mode,
+			env_targets ? env_targets : "");
+
+	env_set("boot_targets", new_targets);
+
+	initrd_hi = gd->start_addr_sp - CONFIG_STACK_SIZE;
+	initrd_hi = round_down(initrd_hi, SZ_16M);
+	env_set_addr("initrd_high", (void *)initrd_hi);
+
+	reset_reason();
 
 	return 0;
 }
+#endif
 
 int checkboard(void)
 {
@@ -422,53 +719,38 @@ int checkboard(void)
 	return 0;
 }
 
-#ifdef CONFIG_USB_DWC3
-static struct dwc3_device dwc3_device_data0 = {
-	.maximum_speed = USB_SPEED_HIGH,
-	.base = ZYNQMP_USB0_XHCI_BASEADDR,
-	.dr_mode = USB_DR_MODE_PERIPHERAL,
-	.index = 0,
-};
+#if defined(CONFIG_AES)
 
-static struct dwc3_device dwc3_device_data1 = {
-	.maximum_speed = USB_SPEED_HIGH,
-	.base = ZYNQMP_USB1_XHCI_BASEADDR,
-	.dr_mode = USB_DR_MODE_PERIPHERAL,
-	.index = 1,
-};
+#define KEY_LEN				64
+#define IV_LEN				24
+#define ZYNQMP_SIP_SVC_PM_SECURE_LOAD	0xC2000019
+#define ZYNQMP_PM_SECURE_AES		0x1
 
-int usb_gadget_handle_interrupts(int index)
+int aes_decrypt_hw(u8 *key_ptr, u8 *src_ptr, u8 *dst_ptr, u32 len)
 {
-	dwc3_uboot_handle_interrupt(index);
-	return 0;
-}
+	int ret;
+	u32 src_lo, src_hi, wlen;
+	u32 ret_payload[PAYLOAD_ARG_CNT];
 
-int board_usb_init(int index, enum usb_init_type init)
-{
-	debug("%s: index %x\n", __func__, index);
+	if ((ulong)src_ptr != ALIGN((ulong)src_ptr,
+				    CONFIG_SYS_CACHELINE_SIZE)) {
+		debug("FAIL: Source address not aligned:%p\n", src_ptr);
+		return -EINVAL;
+	}
 
-#if defined(CONFIG_USB_GADGET_DOWNLOAD)
-	g_dnl_set_serialnumber(CONFIG_SYS_CONFIG_NAME);
-#endif
+	src_lo = (u32)(ulong)src_ptr;
+	src_hi = upper_32_bits((ulong)src_ptr);
+	wlen = DIV_ROUND_UP(len, 4);
 
-	switch (index) {
-	case 0:
-		return dwc3_uboot_init(&dwc3_device_data0);
-	case 1:
-		return dwc3_uboot_init(&dwc3_device_data1);
-	};
+	memcpy(src_ptr + len, key_ptr, KEY_LEN + IV_LEN);
+	len = ROUND(len + KEY_LEN + IV_LEN, CONFIG_SYS_CACHELINE_SIZE);
+	flush_dcache_range((ulong)src_ptr, (ulong)(src_ptr + len));
 
-	return -1;
-}
+	ret = invoke_smc(ZYNQMP_SIP_SVC_PM_SECURE_LOAD, src_lo, src_hi, wlen,
+			 ZYNQMP_PM_SECURE_AES, ret_payload);
+	if (ret)
+		printf("Fail: %s: %d\n", __func__, ret);
 
-int board_usb_cleanup(int index, enum usb_init_type init)
-{
-	dwc3_uboot_exit(index);
-	return 0;
+	return ret;
 }
 #endif
-
-void reset_misc(void)
-{
-	psci_system_reset(true);
-}

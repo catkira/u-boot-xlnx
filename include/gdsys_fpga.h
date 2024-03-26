@@ -1,8 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * (C) Copyright 2010
- * Dirk Eibach,  Guntermann & Drunck GmbH, eibach@gdsys.de
- *
- * SPDX-License-Identifier:	GPL-2.0+
+ * Dirk Eibach,  Guntermann & Drunck GmbH, dirk.eibach@gdsys.cc
  */
 
 #ifndef __GDSYS_FPGA_H
@@ -17,7 +16,6 @@ enum {
 };
 
 int get_fpga_state(unsigned dev);
-void print_fpga_state(unsigned dev);
 
 int fpga_set_reg(u32 fpga, u16 *reg, off_t regoff, u16 data);
 int fpga_get_reg(u32 fpga, u16 *reg, off_t regoff, u16 *data);

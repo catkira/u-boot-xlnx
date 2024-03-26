@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * LG Optimus Black codename sniper board
  *
  * Copyright (C) 2015 Paul Kocialkowski <contact@paulk.fr>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
@@ -31,7 +30,8 @@ const omap3_sysinfo sysinfo = {
 static const struct ns16550_platdata serial_omap_platdata = {
 	.base = OMAP34XX_UART3,
 	.reg_shift = 2,
-	.clock = V_NS16550_CLK
+	.clock = V_NS16550_CLK,
+	.fcr = UART_FCR_DEFVAL,
 };
 
 U_BOOT_DEVICE(sniper_serial) = {
@@ -132,8 +132,8 @@ int misc_init_r(void)
 	}
 
 	if (reboot_mode[0] > 0 && isascii(reboot_mode[0])) {
-		if (!getenv("reboot-mode"))
-			setenv("reboot-mode", (char *)reboot_mode);
+		if (!env_get("reboot-mode"))
+			env_set("reboot-mode", (char *)reboot_mode);
 	}
 
 	omap_reboot_mode_clear();
@@ -173,17 +173,15 @@ void reset_misc(void)
 	omap_reboot_mode_store(reboot_mode);
 }
 
-int fb_set_reboot_flag(void)
+int fastboot_set_reboot_flag(void)
 {
 	return omap_reboot_mode_store("b");
 }
 
-#ifndef CONFIG_SPL_BUILD
 int board_mmc_init(bd_t *bis)
 {
 	return omap_mmc_init(1, 0, 0, -1, -1);
 }
-#endif
 
 void board_mmc_power_init(void)
 {

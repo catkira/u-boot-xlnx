@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  *  armboot - Startup Code for ARM1176 CPU-core
  *
@@ -5,8 +6,6 @@
  *
  * Copyright (C) 2008
  * Guennadi Liakhovetki, DENX Software Engineering, <lg@denx.de>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  *
  * 2007-09-21 - Restructured codes by jsgood (jsgood.yang@samsung.com)
  * 2007-09-21 - Added MoviNAND and OneNAND boot codes by
@@ -16,6 +15,7 @@
 
 #include <asm-offsets.h>
 #include <config.h>
+#include <linux/linkage.h>
 
 #ifndef CONFIG_SYS_PHY_UBOOT_BASE
 #define CONFIG_SYS_PHY_UBOOT_BASE	CONFIG_SYS_UBOOT_BASE
@@ -37,6 +37,11 @@
 	.globl reset
 
 reset:
+	/* Allow the board to save important registers */
+	b	save_boot_params
+.globl	save_boot_params_ret
+save_boot_params_ret:
+
 	/*
 	 * set the cpu to SVC32 mode
 	 */
@@ -110,3 +115,7 @@ mmu_disable_phys:
 c_runtime_cpu_setup:
 
 	mov	pc, lr
+
+WEAK(save_boot_params)
+	b	save_boot_params_ret	/* back to my caller */
+ENDPROC(save_boot_params)

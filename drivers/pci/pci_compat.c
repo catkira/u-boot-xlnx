@@ -1,9 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Compatibility functions for pre-driver-model code
  *
  * Copyright (C) 2014 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <common.h>
 #include <dm.h>
@@ -49,5 +48,5 @@ struct pci_controller *pci_bus_to_hose(int busnum)
 		return NULL;
 	}
 
-	return dev_get_uclass_priv(bus);
+	return dev_get_uclass_priv(pci_get_controller(bus));
 }

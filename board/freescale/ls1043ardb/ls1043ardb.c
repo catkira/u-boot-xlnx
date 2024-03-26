@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2015 Freescale Semiconductor, Inc.
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -10,13 +9,13 @@
 #include <asm/arch/clock.h>
 #include <asm/arch/fsl_serdes.h>
 #include <asm/arch/soc.h>
+#include <asm/arch-fsl-layerscape/fsl_icid.h>
 #include <fdt_support.h>
 #include <hwconfig.h>
 #include <ahci.h>
 #include <mmc.h>
 #include <scsi.h>
 #include <fm_eth.h>
-#include <fsl_csu.h>
 #include <fsl_esdhc.h>
 #include <fsl_ifc.h>
 #include <fsl_sec.h>
@@ -24,12 +23,122 @@
 #ifdef CONFIG_U_QE
 #include <fsl_qe.h>
 #endif
-
+#include <asm/arch/ppa.h>
 
 DECLARE_GLOBAL_DATA_PTR;
 
+#ifdef CONFIG_TFABOOT
+struct ifc_regs ifc_cfg_nor_boot[CONFIG_SYS_FSL_IFC_BANK_COUNT] = {
+	{
+		"nor",
+		CONFIG_SYS_NOR_CSPR,
+		CONFIG_SYS_NOR_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+
+	},
+	{
+		"nand",
+		CONFIG_SYS_NAND_CSPR,
+		CONFIG_SYS_NAND_CSPR_EXT,
+		CONFIG_SYS_NAND_AMASK,
+		CONFIG_SYS_NAND_CSOR,
+		{
+			CONFIG_SYS_NAND_FTIM0,
+			CONFIG_SYS_NAND_FTIM1,
+			CONFIG_SYS_NAND_FTIM2,
+			CONFIG_SYS_NAND_FTIM3
+		},
+	},
+	{
+		"cpld",
+		CONFIG_SYS_CPLD_CSPR,
+		CONFIG_SYS_CPLD_CSPR_EXT,
+		CONFIG_SYS_CPLD_AMASK,
+		CONFIG_SYS_CPLD_CSOR,
+		{
+			CONFIG_SYS_CPLD_FTIM0,
+			CONFIG_SYS_CPLD_FTIM1,
+			CONFIG_SYS_CPLD_FTIM2,
+			CONFIG_SYS_CPLD_FTIM3
+		},
+	}
+};
+
+struct ifc_regs ifc_cfg_nand_boot[CONFIG_SYS_FSL_IFC_BANK_COUNT] = {
+	{
+		"nand",
+		CONFIG_SYS_NAND_CSPR,
+		CONFIG_SYS_NAND_CSPR_EXT,
+		CONFIG_SYS_NAND_AMASK,
+		CONFIG_SYS_NAND_CSOR,
+		{
+			CONFIG_SYS_NAND_FTIM0,
+			CONFIG_SYS_NAND_FTIM1,
+			CONFIG_SYS_NAND_FTIM2,
+			CONFIG_SYS_NAND_FTIM3
+		},
+	},
+	{
+		"nor",
+		CONFIG_SYS_NOR_CSPR,
+		CONFIG_SYS_NOR_CSPR_EXT,
+		CONFIG_SYS_NOR_AMASK,
+		CONFIG_SYS_NOR_CSOR,
+		{
+			CONFIG_SYS_NOR_FTIM0,
+			CONFIG_SYS_NOR_FTIM1,
+			CONFIG_SYS_NOR_FTIM2,
+			CONFIG_SYS_NOR_FTIM3
+		},
+	},
+	{
+		"cpld",
+		CONFIG_SYS_CPLD_CSPR,
+		CONFIG_SYS_CPLD_CSPR_EXT,
+		CONFIG_SYS_CPLD_AMASK,
+		CONFIG_SYS_CPLD_CSOR,
+		{
+			CONFIG_SYS_CPLD_FTIM0,
+			CONFIG_SYS_CPLD_FTIM1,
+			CONFIG_SYS_CPLD_FTIM2,
+			CONFIG_SYS_CPLD_FTIM3
+		},
+	}
+};
+
+void ifc_cfg_boot_info(struct ifc_regs_info *regs_info)
+{
+	enum boot_src src = get_boot_src();
+
+	if (src == BOOT_SOURCE_IFC_NAND)
+		regs_info->regs = ifc_cfg_nand_boot;
+	else
+		regs_info->regs = ifc_cfg_nor_boot;
+	regs_info->cs_size = CONFIG_SYS_FSL_IFC_BANK_COUNT;
+}
+
+#endif
+int board_early_init_f(void)
+{
+	fsl_lsch2_early_init_f();
+
+	return 0;
+}
+
+#ifndef CONFIG_SPL_BUILD
+
 int checkboard(void)
 {
+#ifdef CONFIG_TFABOOT
+	enum boot_src src = get_boot_src();
+#endif
 	static const char *freq[2] = {"100.00MHZ", "156.25MHZ"};
 #ifndef CONFIG_SD_BOOT
 	u8 cfg_rcw_src1, cfg_rcw_src2;
@@ -38,6 +147,12 @@ int checkboard(void)
 	u8 sd1refclk_sel;
 
 	printf("Board: LS1043ARDB, boot from ");
+
+#ifdef CONFIG_TFABOOT
+	if (src == BOOT_SOURCE_SD_MMC)
+		puts("SD\n");
+	else {
+#endif
 
 #ifdef CONFIG_SD_BOOT
 	puts("SD\n");
@@ -56,6 +171,9 @@ int checkboard(void)
 		printf("Invalid setting of SW4\n");
 #endif
 
+#ifdef CONFIG_TFABOOT
+	}
+#endif
 	printf("CPLD:  V%x.%x\nPCBA:  V%x.0\n", CPLD_READ(cpld_ver),
 	       CPLD_READ(cpld_ver_sub), CPLD_READ(pcba_ver));
 
@@ -66,30 +184,37 @@ int checkboard(void)
 	return 0;
 }
 
-int dram_init(void)
-{
-	gd->ram_size = initdram(0);
-
-	return 0;
-}
-
-int board_early_init_f(void)
-{
-	fsl_lsch2_early_init_f();
-
-	return 0;
-}
-
 int board_init(void)
 {
 	struct ccsr_scfg *scfg = (struct ccsr_scfg *)CONFIG_SYS_FSL_SCFG_ADDR;
+
+#ifdef CONFIG_SYS_FSL_ERRATUM_A010315
+	erratum_a010315();
+#endif
 
 #ifdef CONFIG_FSL_IFC
 	init_final_memctl_regs();
 #endif
 
-#ifdef CONFIG_LAYERSCAPE_NS_ACCESS
-	enable_layerscape_ns_access();
+#ifdef CONFIG_SECURE_BOOT
+	/* In case of Secure Boot, the IBR configures the SMMU
+	 * to allow only Secure transactions.
+	 * SMMU must be reset in bypass mode.
+	 * Set the ClientPD bit and Clear the USFCFG Bit
+	 */
+	u32 val;
+	val = (in_le32(SMMU_SCR0) | SCR0_CLIENTPD_MASK) & ~(SCR0_USFCFG_MASK);
+	out_le32(SMMU_SCR0, val);
+	val = (in_le32(SMMU_NSCR0) | SCR0_CLIENTPD_MASK) & ~(SCR0_USFCFG_MASK);
+	out_le32(SMMU_NSCR0, val);
+#endif
+
+#ifdef CONFIG_FSL_CAAM
+	sec_init();
+#endif
+
+#ifdef CONFIG_FSL_LS_PPA
+	ppa_init();
 #endif
 
 #ifdef CONFIG_U_QE
@@ -131,21 +256,6 @@ int config_board_mux(void)
 int misc_init_r(void)
 {
 	config_board_mux();
-#ifdef CONFIG_SECURE_BOOT
-	/* In case of Secure Boot, the IBR configures the SMMU
-	 * to allow only Secure transactions.
-	 * SMMU must be reset in bypass mode.
-	 * Set the ClientPD bit and Clear the USFCFG Bit
-	 */
-	u32 val;
-	val = (in_le32(SMMU_SCR0) | SCR0_CLIENTPD_MASK) & ~(SCR0_USFCFG_MASK);
-	out_le32(SMMU_SCR0, val);
-	val = (in_le32(SMMU_NSCR0) | SCR0_CLIENTPD_MASK) & ~(SCR0_USFCFG_MASK);
-	out_le32(SMMU_NSCR0, val);
-#endif
-#ifdef CONFIG_FSL_CAAM
-	return sec_init();
-#endif
 	return 0;
 }
 #endif
@@ -177,6 +287,8 @@ int ft_board_setup(void *blob, bd_t *bd)
 #ifdef CONFIG_SYS_DPAA_FMAN
 	fdt_fixup_fman_ethernet(blob);
 #endif
+
+	fdt_fixup_icid(blob);
 
 	/*
 	 * qe-hdlc and usb multi-use the pins,
@@ -215,3 +327,5 @@ u16 flash_read16(void *addr)
 
 	return (((val) >> 8) & 0x00ff) | (((val) << 8) & 0xff00);
 }
+
+#endif

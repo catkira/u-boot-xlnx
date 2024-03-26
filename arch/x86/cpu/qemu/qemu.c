@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2015, Bin Meng <bmeng.cn@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <common.h>
@@ -47,7 +46,7 @@ static void qemu_x86_fwcfg_read_entry_pio(uint16_t entry,
 static void qemu_x86_fwcfg_read_entry_dma(struct fw_cfg_dma_access *dma)
 {
 	/* the DMA address register is big endian */
-	outl(cpu_to_be32((uint32_t)dma), FW_DMA_PORT_HIGH);
+	outl(cpu_to_be32((uintptr_t)dma), FW_DMA_PORT_HIGH);
 
 	while (be32_to_cpu(dma->control) & ~FW_CFG_DMA_ERROR)
 		__asm__ __volatile__ ("pause");
@@ -137,32 +136,25 @@ static void qemu_chipset_init(void)
 #endif
 }
 
+#if !CONFIG_IS_ENABLED(SPL_X86_32BIT_INIT)
 int arch_cpu_init(void)
 {
-	int ret;
-
 	post_code(POST_CPU_INIT);
 
-	ret = x86_cpu_init_f();
-	if (ret)
-		return ret;
+	return x86_cpu_init_f();
+}
 
+int checkcpu(void)
+{
 	return 0;
 }
 
-#ifndef CONFIG_EFI_STUB
 int print_cpuinfo(void)
 {
 	post_code(POST_CPU_INFO);
 	return default_print_cpuinfo();
 }
 #endif
-
-void reset_cpu(ulong addr)
-{
-	/* cold reset */
-	x86_full_reset();
-}
 
 int arch_early_init_r(void)
 {

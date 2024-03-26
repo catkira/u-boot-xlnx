@@ -1,15 +1,13 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Toradex Colibri PXA270 configuration file
  *
  * Copyright (C) 2010 Marek Vasut <marek.vasut@gmail.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #ifndef	__CONFIG_PXA_COMMON_H__
 #define	__CONFIG_PXA_COMMON_H__
 
-#define	CONFIG_DISPLAY_CPUINFO
 #define	CONFIG_SYS_ARM_CACHE_WRITETHROUGH
 
 /*
@@ -23,10 +21,7 @@
  * MMC Card Configuration
  */
 #ifdef	CONFIG_CMD_MMC
-#define	CONFIG_MMC
-#define	CONFIG_GENERIC_MMC
 #define	CONFIG_PXA_MMC_GENERIC
-#define	CONFIG_DOS_PARTITION
 #endif
 
 /*
@@ -43,7 +38,6 @@
 #endif
 #define	CONFIG_SYS_USB_OHCI_REGS_BASE		0x4c000000
 #define	CONFIG_SYS_USB_OHCI_SLOT_NAME		"pxa-ohci"
-#define	CONFIG_USB_STORAGE
 #endif
 
 #endif	/* __CONFIG_PXA_COMMON_H__ */

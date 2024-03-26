@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright 2010
  * Texas Instruments, <www.ti.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #include <config.h>
 
@@ -231,9 +230,9 @@ void twl6030_power_mmc_init(int dev_index)
 		/* Enable P1 output for VMMC */
 		twl6030_i2c_write_u8(TWL6030_CHIP_PM, TWL6030_VMMC_CFG_STATE,
 			TWL6030_CFG_STATE_P1 | TWL6030_CFG_STATE_ON);
-
-		twl6030_i2c_read_u8(TWL6030_CHIP_PM, TWL6030_PH_STS_BOOT, &value);
 	} else if (dev_index == 1) {
+		twl6030_i2c_read_u8(TWL6030_CHIP_PM, TWL6030_PH_STS_BOOT,
+				    &value);
 		/* BOOT2 indicates 1.8V/2.8V VAUX1 for eMMC */
 		if (value & TWL6030_PH_STS_BOOT2) {
 			/* 1.8V voltage output for VAUX1 */
@@ -269,3 +268,42 @@ void twl6030_usb_device_settings()
 	value &= ~TWL6030_MISC2_VUSB_IN_PMID;
 	twl6030_i2c_write_u8(TWL6030_CHIP_PM, TWL6030_MISC2, value);
 }
+
+#ifdef CONFIG_DM_I2C
+int twl6030_i2c_write_u8(u8 chip_no, u8 reg, u8 val)
+{
+	struct udevice *dev;
+	int ret;
+
+	ret = i2c_get_chip_for_busnum(0, chip_no, 1, &dev);
+	if (ret) {
+		pr_err("unable to get I2C bus. ret %d\n", ret);
+		return ret;
+	}
+	ret = dm_i2c_reg_write(dev, reg, val);
+	if (ret) {
+		pr_err("writing to twl6030 failed. ret %d\n", ret);
+		return ret;
+	}
+	return 0;
+}
+
+int twl6030_i2c_read_u8(u8 chip_no, u8 reg, u8 *valp)
+{
+	struct udevice *dev;
+	int ret;
+
+	ret = i2c_get_chip_for_busnum(0, chip_no, 1, &dev);
+	if (ret) {
+		pr_err("unable to get I2C bus. ret %d\n", ret);
+		return ret;
+	}
+	ret = dm_i2c_reg_read(dev, reg);
+	if (ret < 0) {
+		pr_err("reading from twl6030 failed. ret %d\n", ret);
+		return ret;
+	}
+	*valp = (u8)ret;
+	return 0;
+}
+#endif

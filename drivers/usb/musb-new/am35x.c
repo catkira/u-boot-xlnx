@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Texas Instruments AM35x "glue layer"
  *
@@ -7,8 +8,6 @@
  * Copyright (c) 2008-2009, MontaVista Software, Inc. <source@mvista.com>
  *
  * This file is part of the Inventra Controller Driver for Linux.
- *
- * SPDX-License-Identifier:	GPL-2.0
  *
  */
 
@@ -336,7 +335,7 @@ eoi:
 	if (ret == IRQ_HANDLED || epintr || usbintr) {
 		/* clear level interrupt */
 		if (data->clear_irq)
-			data->clear_irq();
+			data->clear_irq(data->dev);
 		/* write EOI */
 		musb_writel(reg_base, USB_END_OF_INTR_REG, 0);
 	}
@@ -401,14 +400,14 @@ static int am35x_musb_init(struct musb *musb)
 
 	/* Reset the musb */
 	if (data->reset)
-		data->reset();
+		data->reset(data->dev);
 
 	/* Reset the controller */
 	musb_writel(reg_base, USB_CTRL_REG, AM35X_SOFT_RESET_MASK);
 
 	/* Start the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(1);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 1);
 
 	msleep(5);
 
@@ -416,7 +415,7 @@ static int am35x_musb_init(struct musb *musb)
 
 	/* clear level interrupt */
 	if (data->clear_irq)
-		data->clear_irq();
+		data->clear_irq(data->dev);
 
 	return 0;
 }
@@ -438,8 +437,8 @@ static int am35x_musb_exit(struct musb *musb)
 #endif
 
 	/* Shutdown the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(0);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 0);
 
 #ifndef __UBOOT__
 	usb_put_phy(musb->xceiv);
@@ -629,8 +628,8 @@ static int am35x_suspend(struct device *dev)
 	struct omap_musb_board_data *data = plat->board_data;
 
 	/* Shutdown the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(0);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 0);
 
 	clk_disable(glue->phy_clk);
 	clk_disable(glue->clk);
@@ -646,8 +645,8 @@ static int am35x_resume(struct device *dev)
 	int			ret;
 
 	/* Start the on-chip PHY and its PLL. */
-	if (data->set_phy_power)
-		data->set_phy_power(1);
+	if (data && data->set_phy_power)
+		data->set_phy_power(data->dev, 1);
 
 	ret = clk_enable(glue->phy_clk);
 	if (ret) {

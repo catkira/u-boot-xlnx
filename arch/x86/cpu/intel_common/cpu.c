@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016 Google, Inc
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 
 #include <common.h>
@@ -42,8 +41,10 @@ int cpu_common_init(void)
 	enable_lapic();
 
 	ret = microcode_update_intel();
-	if (ret && ret != -EEXIST)
+	if (ret && ret != -EEXIST) {
+		debug("%s: Microcode update failure (err=%d)\n", __func__, ret);
 		return ret;
+	}
 
 	/* Enable upper 128bytes of CMOS */
 	writel(1 << 2, RCB_REG(RC));

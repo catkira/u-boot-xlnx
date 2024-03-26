@@ -1,7 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright 2014 Google Inc.
- *
- * SPDX-License-Identifier:     GPL-2.0+
  */
 
 #include <common.h>
@@ -23,10 +22,19 @@ int display_enable(struct udevice *dev, int panel_bpp,
 			const struct display_timing *timing)
 {
 	struct dm_display_ops *ops = display_get_ops(dev);
+	struct display_plat *disp_uc_plat;
+	int ret;
 
 	if (!ops || !ops->enable)
 		return -ENOSYS;
-	return ops->enable(dev, panel_bpp, timing);
+	ret = ops->enable(dev, panel_bpp, timing);
+	if (ret)
+		return ret;
+
+	disp_uc_plat = dev_get_uclass_platdata(dev);
+	disp_uc_plat->in_use = true;
+
+	return 0;
 }
 
 int display_read_timing(struct udevice *dev, struct display_timing *timing)
@@ -46,6 +54,13 @@ int display_read_timing(struct udevice *dev, struct display_timing *timing)
 		return ret;
 
 	return edid_get_timing(buf, ret, timing, &panel_bits_per_colour);
+}
+
+bool display_in_use(struct udevice *dev)
+{
+	struct display_plat *disp_uc_plat = dev_get_uclass_platdata(dev);
+
+	return disp_uc_plat->in_use;
 }
 
 UCLASS_DRIVER(display) = {

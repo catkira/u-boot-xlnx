@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  *  U-Boot - x86 Startup Code
  *
@@ -6,8 +7,6 @@
  *
  * (C) Copyright 2002
  * Daniel Engström, Omicron Ceti AB, <daniel@omicron.se>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 
 #include <config.h>
@@ -17,16 +16,9 @@
 #include <asm/processor-flags.h>
 #include <generated/generic-asm-offsets.h>
 #include <generated/asm-offsets.h>
+#include <linux/linkage.h>
 
-/*
- * Define this to boot U-Boot from a 32-bit program which sets the GDT
- * differently. This can be used to boot directly from any stage of coreboot,
- * for example, bypassing the normal payload-loading feature.
- * This is only useful for development.
- */
-#undef LOAD_FROM_32_BIT
-
-.section .text
+.section .text.start
 .code32
 .globl _start
 .type _start, @function
@@ -76,7 +68,7 @@ _start:
 	/* Save table pointer */
 	movl	%ecx, %esi
 
-#ifdef LOAD_FROM_32_BIT
+#ifdef CONFIG_X86_LOAD_FROM_32_BIT
 	lgdt	gdt_ptr2
 #endif
 
@@ -193,13 +185,8 @@ board_init_f_r_trampoline:
 	movl	%eax, %esp
 
 	/* See if we need to disable CAR */
-.weak	car_uninit
-	movl	$car_uninit, %eax
-	cmpl	$0, %eax
-	jz	1f
-
 	call	car_uninit
-1:
+
 	/* Re-enter U-Boot by calling board_init_f_r() */
 	call	board_init_f_r
 
@@ -207,6 +194,10 @@ die:
 	hlt
 	jmp	die
 	hlt
+
+WEAK(car_uninit)
+	ret
+ENDPROC(car_uninit)
 
 blank_idt_ptr:
 	.word	0		/* limit */
@@ -233,7 +224,7 @@ multiboot_header:
 	/* entry addr */
 	.long	CONFIG_SYS_TEXT_BASE
 
-#ifdef LOAD_FROM_32_BIT
+#ifdef CONFIG_X86_LOAD_FROM_32_BIT
 	/*
 	 * The following Global Descriptor Table is just enough to get us into
 	 * 'Flat Protected Mode' - It will be discarded as soon as the final

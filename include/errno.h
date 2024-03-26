@@ -1,13 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0+ */
 /*
  * Copyright (C) 2014 Samsung Electronics
  * Przemyslaw Marczak <p.marczak@samsung.com>
- *
- * SPDX-License-Identifier:	GPL-2.0+
  */
 #ifndef _ERRNO_H
 #define _ERRNO_H
 
-#include <asm-generic/errno.h>
+#include <linux/errno.h>
 
 extern int errno;
 

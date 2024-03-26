@@ -1,10 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * From Coreboot file device/oprom/realmode/x86.c
  *
  * Copyright (C) 2007 Advanced Micro Devices, Inc.
  * Copyright (C) 2009-2010 coresystems GmbH
- *
- * SPDX-License-Identifier:	GPL-2.0
  */
 #include <common.h>
 #include <bios_emul.h>
@@ -157,7 +156,7 @@ static void setup_realmode_idt(void)
 	 for (i = 0; i < 256; i++) {
 		idts[i].cs = 0;
 		idts[i].offset = 0x1000 + (i * __idt_handler_size);
-		write_idt_stub((void *)((u32)idts[i].offset), i);
+		write_idt_stub((void *)((ulong)idts[i].offset), i);
 	}
 
 	/*
@@ -185,6 +184,7 @@ static void setup_realmode_idt(void)
 	write_idt_stub((void *)0xffe6e, 0x1a);
 }
 
+#ifdef CONFIG_FRAMEBUFFER_SET_VESA_MODE
 static u8 vbe_get_mode_info(struct vbe_mode_info *mi)
 {
 	u16 buffer_seg;
@@ -227,7 +227,7 @@ static void vbe_set_graphics(int vesa_mode, struct vbe_mode_info *mode_info)
 	mode_info->video_mode = (1 << 14) | vesa_mode;
 	vbe_get_mode_info(mode_info);
 
-	framebuffer = (unsigned char *)mode_info->vesa.phys_base_ptr;
+	framebuffer = (unsigned char *)(ulong)mode_info->vesa.phys_base_ptr;
 	debug("VBE: resolution:  %dx%d@%d\n",
 	      le16_to_cpu(mode_info->vesa.x_resolution),
 	      le16_to_cpu(mode_info->vesa.y_resolution),
@@ -241,6 +241,7 @@ static void vbe_set_graphics(int vesa_mode, struct vbe_mode_info *mode_info)
 	mode_info->video_mode &= 0x3ff;
 	vbe_set_mode(mode_info);
 }
+#endif /* CONFIG_FRAMEBUFFER_SET_VESA_MODE */
 
 void bios_run_on_x86(struct udevice *dev, unsigned long addr, int vesa_mode,
 		     struct vbe_mode_info *mode_info)
@@ -273,8 +274,10 @@ void bios_run_on_x86(struct udevice *dev, unsigned long addr, int vesa_mode,
 		      0x0);
 	debug("done\n");
 
+#ifdef CONFIG_FRAMEBUFFER_SET_VESA_MODE
 	if (vesa_mode != -1)
 		vbe_set_graphics(vesa_mode, mode_info);
+#endif
 }
 
 asmlinkage int interrupt_handler(u32 intnumber, u32 gsfs, u32 dses,

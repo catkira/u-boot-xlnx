@@ -1,11 +1,10 @@
+/* SPDX-License-Identifier: LGPL-2.1 */
 /**
  * \file sha1.h
  * based from http://xyssl.org/code/source/sha1/
  *  FIPS-180-1 compliant SHA-1 implementation
  *
  *  Copyright (C) 2003-2006  Christophe Devine
- *
- * SPDX-License-Identifier:	LGPL-2.1
  */
 /*
  *  The SHA-1 standard was published by NIST in 1993.
@@ -21,6 +20,9 @@ extern "C" {
 
 #define SHA1_SUM_POS	-0x20
 #define SHA1_SUM_LEN	20
+#define SHA1_DER_LEN	15
+
+extern const uint8_t sha1_der_prefix[];
 
 /**
  * \brief	   SHA-1 context structure
