@@ -273,43 +273,39 @@
 	"tx_gain_int=-3\0" \
 	"uenv_version_int=0\0" \
 	"start_video_packer_int=0\0" \
+	"telemetry_msp_enable_int=1\0" \
+	"telemetry_msp_port_int=/dev/ttyUL0\0" \
 	"check_uenv_version=if test -n \"${uenv_version}\" && test ! \"${uenv_version}\" = \"${uenv_version_int}\" ; then " \
 			"echo upgrade detected, loading default env ...;" \
 			"env export -t 0x10000000 uenv_version; " \
 			"env default -a -f; " \
 			"env import -t 0x10000000 20; " \
 			"setenv uenv_version_int ${uenv_version}; " \
-			"env delete tx_frequency; " \
-			"env delete tx_gain; " \
-			"env delete uenv_version; " \
-			"env delete start_video_packer; " \
 			"saveenv; " \
 		"fi; \0" \
 	"loadvals_skynet=if test -n \"${tx_frequency}\" && test ! \"${tx_frequency}\" = \"${tx_frequency_int}\" ; then " \
 			"setenv tx_frequency_int ${tx_frequency}; " \
-			"env delete tx_frequency; " \
-			"env delete tx_gain; " \
-			"env delete uenv_version; " \
-			"env delete start_video_packer; " \
 			"echo storing new tx_frequency in env ...; " \
 			"saveenv; " \
 		"fi; " \
 		"if test -n \"${tx_gain}\" && test ! \"${tx_gain}\" = \"${tx_gain_int}\" ; then " \
 			"setenv tx_gain_int ${tx_gain}; " \
-			"env delete tx_frequency; " \
-			"env delete tx_gain; " \
-			"env delete uenv_version; " \
-			"env delete start_video_packer; " \
 			"echo storing new tx_gain in env ...; " \
 			"saveenv; " \
 		"fi; " \
 		"if test -n \"${start_video_packer}\" && test ! \"${start_video_packer}\" = \"${start_video_packer_int}\" ; then " \
 			"setenv start_video_packer_int ${start_video_packer}; " \
-			"env delete tx_frequency; " \
-			"env delete tx_gain; " \
-			"env delete uenv_version; " \
-			"env delete start_video_packer; " \
 			"echo storing new start_video_packer in env ...; " \
+			"saveenv; " \
+		"fi;" \
+		"if test -n \"${telemetry_msp_enable}\" && test ! \"${telemetry_msp_enable}\" = \"${telemetry_msp_enable_int}\" ; then " \
+			"setenv telemetry_msp_enable_int ${telemetry_msp_enable}; " \
+			"echo storing new telemetry_msp_enable in env ...; " \
+			"saveenv; " \
+		"fi;" \
+		"if test -n \"${telemetry_msp_port}\" && test ! \"${telemetry_msp_port}\" = \"${telemetry_msp_port_int}\" ; then " \
+			"setenv telemetry_msp_port_int ${telemetry_msp_port}; " \
+			"echo storing new telemetry_msp_port in env ...; " \
 			"saveenv; " \
 		"fi; \0" \
 	"adi_loadvals_pluto=if test -n \"${ad936x_ext_refclk}\" && test ! -n \"${ad936x_skip_ext_refclk}\"; then " \
