@@ -275,6 +275,7 @@
 	"start_video_packer_int=0\0" \
 	"telemetry_msp_enable_int=1\0" \
 	"telemetry_msp_port_int=/dev/ttyUL0\0" \
+	"telemetry_msp_priority_int=0\0" \
 	"check_uenv_version=if test -n \"${uenv_version}\" && test ! \"${uenv_version}\" = \"${uenv_version_int}\" ; then " \
 			"echo upgrade detected, loading default env ...;" \
 			"env export -t 0x10000000 uenv_version; " \
@@ -306,6 +307,11 @@
 		"if test -n \"${telemetry_msp_port}\" && test ! \"${telemetry_msp_port}\" = \"${telemetry_msp_port_int}\" ; then " \
 			"setenv telemetry_msp_port_int ${telemetry_msp_port}; " \
 			"echo storing new telemetry_msp_port in env ...; " \
+			"saveenv; " \
+		"fi;" \
+		"if test -n \"${telemetry_msp_priority}\" && test ! \"${telemetry_msp_priority}\" = \"${telemetry_msp_priority_int}\" ; then " \
+			"setenv telemetry_msp_priority_int ${telemetry_msp_priority}; " \
+			"echo storing new telemetry_msp_priority in env ...; " \
 			"saveenv; " \
 		"fi; \0" \
 	"adi_loadvals_pluto=if test -n \"${ad936x_ext_refclk}\" && test ! -n \"${ad936x_skip_ext_refclk}\"; then " \
