@@ -25,7 +25,6 @@
 
 	chosen {
 		bootargs = "earlyprintk";
-		linux,stdout-path = &uart1;
 		stdout-path = &uart1;
 	};
 
