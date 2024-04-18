@@ -309,6 +309,11 @@
 			"echo storing new telemetry_msp_port in env ...; " \
 			"saveenv; " \
 		"fi;" \
+		"if test -n \"${ipaddr_eth}\" && test ! \"${ipaddr_eth}\" = \"${ipaddr_eth_int}\" ; then " \
+			"setenv ipaddr_eth_int ${ipaddr_eth}; " \
+			"echo storing new ipaddr_eth in env ...; " \
+			"saveenv; " \
+		"fi;" \
 		"if test -n \"${telemetry_msp_priority}\" && test ! \"${telemetry_msp_priority}\" = \"${telemetry_msp_priority_int}\" ; then " \
 			"setenv telemetry_msp_priority_int ${telemetry_msp_priority}; " \
 			"echo storing new telemetry_msp_priority in env ...; " \
