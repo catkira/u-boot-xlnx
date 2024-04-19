@@ -90,6 +90,7 @@ dtb-$(CONFIG_ARCH_ZYNQ) += zynq-zc702.dtb \
 	zynq-antsdre200.dtb \
 	zynq-antsdre200_no_console.dtb \
 	zynq-ant.dtb \
+	zynq-ant_no_console.dtb \
 	zynq-cse-nand.dtb \
 	zynq-cse-nor.dtb \
 	zynq-cse-qspi.dtb \
