@@ -276,6 +276,7 @@
 	"telemetry_msp_enable_int=1\0" \
 	"telemetry_msp_port_int=/dev/ttyUL0\0" \
 	"telemetry_msp_priority_int=0\0" \
+	"variable_tx_gain_int=0\0" \
 	"check_uenv_version=if test -n \"${uenv_version}\" && test ! \"${uenv_version}\" = \"${uenv_version_int}\" ; then " \
 			"echo upgrade detected, loading default env ...;" \
 			"env export -t 0x10000000 uenv_version; " \
@@ -312,6 +313,11 @@
 		"if test -n \"${ipaddr_eth}\" && test ! \"${ipaddr_eth}\" = \"${ipaddr_eth_int}\" ; then " \
 			"setenv ipaddr_eth_int ${ipaddr_eth}; " \
 			"echo storing new ipaddr_eth in env ...; " \
+			"saveenv; " \
+		"fi;" \
+		"if test -n \"${variable_tx_gain}\" && test ! \"${variable_tx_gain}\" = \"${variable_tx_gain_int}\" ; then " \
+			"setenv variable_tx_gain_int ${variable_tx_gain}; " \
+			"echo storing new variable_tx_gain in env ...; " \
 			"saveenv; " \
 		"fi;" \
 		"if test -n \"${telemetry_msp_priority}\" && test ! \"${telemetry_msp_priority}\" = \"${telemetry_msp_priority_int}\" ; then " \
