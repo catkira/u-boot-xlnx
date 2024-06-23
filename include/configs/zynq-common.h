@@ -269,21 +269,6 @@
 		"fi; \0" \
 	"refclk_source=internal\0" \
 	"mode=2r2t\0" \
-	"uenv_version_int=0\0" \
-	"start_video_packer_int=0\0" \
-	"check_uenv_version=if test -n \"${uenv_version}\" && test ! \"${uenv_version}\" = \"${uenv_version_int}\" ; then " \
-			"echo upgrade detected, loading default env ...;" \
-			"env export -t 0x10000000 uenv_version; " \
-			"env default -a -f; " \
-			"env import -t 0x10000000 20; " \
-			"setenv uenv_version_int ${uenv_version}; " \
-			"saveenv; " \
-		"fi; \0" \
-	"loadvals_skynet=if test -n \"${start_video_packer}\" && test ! \"${start_video_packer}\" = \"${start_video_packer_int}\" ; then " \
-			"setenv start_video_packer_int ${start_video_packer}; " \
-			"echo storing new start_video_packer in env ...; " \
-			"saveenv; " \
-		"fi; \0" \
 	"adi_loadvals_pluto=if test -n \"${ad936x_ext_refclk}\" && test ! -n \"${ad936x_skip_ext_refclk}\"; then " \
 			"fdt set /clocks/clock@0 clock-frequency ${ad936x_ext_refclk}; " \
 		"fi; " \
@@ -378,8 +363,6 @@
 		"fi\0" \
 	"sdboot=if mmcinfo; then " \
 			"run uenvboot; " \
-			"run check_uenv_version; " \
-			"run loadvals_skynet; " \
 			"itest *f8000258 == 480003 && run clear_reset_cause && run dfu_sf; " \
 			"itest *f8000258 == 480007 && run clear_reset_cause && run ramboot_verbose; " \
 			"echo Starting Linux from SD... && " \
